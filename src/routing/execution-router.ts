@@ -5,6 +5,10 @@ import type { Quote } from "../types/quote.js";
 export class ExecutionRouter {
   constructor(private readonly adapter: ExecutionAdapter) {}
 
+  async fetch_quote(intent: MarketIntent): Promise<Quote> {
+    return this.adapter.fetch_quote(intent);
+  }
+
   async route(intent: MarketIntent, quote: Quote): Promise<ExecutionRouteResult> {
     return this.adapter.submit(intent, quote);
   }

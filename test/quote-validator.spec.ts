@@ -6,12 +6,14 @@ import { QuoteValidator } from "../src/service/quote-validator.js";
 
 const intent: MarketIntent = {
   side: "buy",
-  baseAsset: "BTC",
-  quoteAsset: "USD",
+  base_asset: "BTC",
+  quote_asset: "USD",
   size: 1,
-  maxSlippageBps: 50,
-  ttlMs: 30000,
-  clientRef: "ref-1"
+  max_slippage_bps: 50,
+  ttl_ms: 30000,
+  reference_id: "ref-1",
+  idempotency_key: "idem-1",
+  correlation_id: "corr-1"
 };
 
 describe("QuoteValidator", () => {
@@ -20,14 +22,14 @@ describe("QuoteValidator", () => {
   it("accepts fresh matching quotes", () => {
     const now = new Date("2026-01-01T00:00:00.000Z");
     const quote: Quote = {
-      quoteId: "q-1",
-      baseAsset: "BTC",
-      quoteAsset: "USD",
+      quote_id: "q-1",
+      base_asset: "BTC",
+      quote_asset: "USD",
       side: "buy",
       price: 100000,
-      maxSize: 2,
-      validFrom: "2025-12-31T23:59:00.000Z",
-      validUntil: "2026-01-01T00:01:00.000Z",
+      max_size: 2,
+      valid_from: "2025-12-31T23:59:00.000Z",
+      valid_until: "2026-01-01T00:01:00.000Z",
       source: "rfq"
     };
 
@@ -37,14 +39,14 @@ describe("QuoteValidator", () => {
   it("rejects expired quotes", () => {
     const now = new Date("2026-01-01T00:00:00.000Z");
     const quote: Quote = {
-      quoteId: "q-2",
-      baseAsset: "BTC",
-      quoteAsset: "USD",
+      quote_id: "q-2",
+      base_asset: "BTC",
+      quote_asset: "USD",
       side: "buy",
       price: 100000,
-      maxSize: 2,
-      validFrom: "2025-12-31T23:50:00.000Z",
-      validUntil: "2025-12-31T23:59:00.000Z",
+      max_size: 2,
+      valid_from: "2025-12-31T23:50:00.000Z",
+      valid_until: "2025-12-31T23:59:00.000Z",
       source: "rfq"
     };
 

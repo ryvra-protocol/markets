@@ -1,15 +1,20 @@
 import type { MarketIntent } from "../types/market-intent.js";
 import type { Quote } from "../types/quote.js";
 
+export const ROUTE_REASON_CODE_PREFIX = "route_" as const;
+export type RouteReasonCode = `${typeof ROUTE_REASON_CODE_PREFIX}${string}`;
+
 export interface ExecutionRouteResult {
-  routeId: string;
+  route_id: string;
   status: "accepted" | "rejected";
-  reasonCode?: string;
+  reason_codes?: RouteReasonCode[];
+  reference_id: string;
+  correlation_id: string;
 }
 
 export interface ExecutionAdapter {
   name: string;
-  fetchQuote(intent: MarketIntent): Promise<Quote>;
+  fetch_quote(intent: MarketIntent): Promise<Quote>;
   submit(intent: MarketIntent, quote: Quote): Promise<ExecutionRouteResult>;
-  cancel(routeId: string): Promise<void>;
+  cancel(route_id: string): Promise<void>;
 }

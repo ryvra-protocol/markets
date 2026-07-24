@@ -6,6 +6,8 @@ It defines the baseline for:
 - market intents and order workflows
 - quote validation and execution routing
 - post-trade settlement hooks
+- canonical IDs: `reference_id`, `idempotency_key`, `correlation_id`
+- canonical policy decisions: `ALLOW`, `DENY`, `REVIEW` with non-empty DENY `reason_codes`
 
 **Status:** early draft / not production-ready.
 
