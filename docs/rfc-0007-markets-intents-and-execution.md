@@ -17,7 +17,9 @@ Required fields:
 - `size`: positive decimal quantity in base units
 - `max_slippage_bps`: max tolerated slippage in basis points
 - `ttl_ms`: intent validity from creation time
-- `client_ref`: client-provided idempotency reference
+- `reference_id`: client-provided request reference
+- `idempotency_key`: canonical idempotent replay key
+- `correlation_id`: cross-service trace correlation id
 
 Recommended metadata:
 - `account_id`
@@ -74,6 +76,11 @@ Adapter implementations may target:
 
 ## 5. Policy Checkpoints
 
+Policy decision contract:
+- `decision`: `ALLOW` | `DENY` | `REVIEW`
+- `DENY` MUST include non-empty machine-readable `reason_codes`
+- policy reason codes MUST use `policy_` prefix
+
 ### Pre-trade checkpoint
 Validate:
 - account eligibility
@@ -91,7 +98,7 @@ All policy constraints and thresholds are **TBD by governance/policy**.
 
 ## 6. Idempotency and Retry Semantics
 
-- `client_ref` + account scope defines idempotency key.
+- `idempotency_key` + account scope defines idempotency key.
 - Duplicate submission with same idempotency key must return existing order context.
 - Retries must be safe under network and adapter timeouts.
 - Non-destructive retries must emit compensating events rather than mutate historical records.
@@ -114,6 +121,13 @@ Delivery requirements:
 - monotonic sequence per order
 - idempotent consumer guidance
 - signature/authn requirements are **TBD by governance/policy**
+- canonical envelope fields:
+  - `event_id`
+  - `correlation_id`
+  - `reference_id`
+  - `event_type`
+  - `timestamp`
+  - `payload`
 
 ## 8. Failure Handling via Compensating Events
 

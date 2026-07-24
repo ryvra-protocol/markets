@@ -1,8 +1,10 @@
 export interface SettlementRequest {
-  orderId: string;
-  routeId: string;
+  order_id: string;
+  route_id: string;
+  reference_id: string;
+  correlation_id: string;
 }
 
 export interface LedgerClient {
-  settle(request: SettlementRequest): Promise<{ settlementId: string }>;
+  settle(request: SettlementRequest): Promise<{ settlement_id: string }>;
 }

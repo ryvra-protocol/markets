@@ -1,6 +1,7 @@
 export * from "./types/market-intent.js";
 export * from "./types/order.js";
 export * from "./types/quote.js";
+export * from "./types/event-envelope.js";
 
 export * from "./adapters/execution-adapter.js";
 export * from "./adapters/ledger-client.js";

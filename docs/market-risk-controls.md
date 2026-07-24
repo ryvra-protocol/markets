@@ -25,7 +25,7 @@ Thresholds and activation policies are **TBD by governance/policy**.
 ## Suspicious Activity Flags and Trade Eligibility
 
 - suspicious activity flags may reduce eligibility or block routing
-- flagged intents must return deterministic denial reason codes
+- flagged intents must return deterministic denial reason codes with `policy_` prefix
 - manual review hooks are **TBD by governance/policy**
 
 ## Integration with Policy-Risk Reason Codes
