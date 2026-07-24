@@ -1,3 +1,4 @@
+import { ensureRouteReasonCodes } from "../adapters/execution-adapter.js";
 import type { LedgerClient } from "../adapters/ledger-client.js";
 import { ensurePolicyReasonCodes } from "../adapters/policy-client.js";
 import type { PolicyClient } from "../adapters/policy-client.js";
@@ -55,7 +56,7 @@ export class MarketsService {
     if (route.status !== "accepted") {
       const routeRejectedResult = {
         accepted: false as const,
-        reason_codes: route.reason_codes?.length ? route.reason_codes : (["route_rejected"] as [string])
+        reason_codes: ensureRouteReasonCodes(route.reason_codes)
       };
       this.idempotentResults.set(idempotencyCacheKey, routeRejectedResult);
       return routeRejectedResult;
