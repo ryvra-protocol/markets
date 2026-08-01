@@ -8,13 +8,14 @@ It defines the baseline for:
 - post-trade settlement hooks
 - canonical IDs: `reference_id`, `idempotency_key`, `correlation_id`
 - canonical policy decisions: `ALLOW`, `DENY`, `REVIEW` with non-empty DENY `reason_codes`
+- canonical domain contracts for staged pipeline execution (`TradeIntent`, `PolicyDecision`, `RawQuote`/`NetQuote`, `FeeBreakdown`, `ExecutionPlan`, `SettlementEvent`)
 
 **Status:** early draft / not production-ready.
 
 ## Architecture Overview
 
 ```text
-client/API -> markets service -> policy checks -> execution adapter -> ledger settlement
+client/API -> intent normalization -> policy gate -> raw quote -> fee layer -> execution planning -> settlement event
 ```
 
 ## Dependencies

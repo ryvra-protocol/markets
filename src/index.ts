@@ -1,3 +1,5 @@
+export * as domain from "./domain/index.js";
+
 export * from "./types/market-intent.js";
 export * from "./types/order.js";
 export * from "./types/quote.js";
