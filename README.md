@@ -5,16 +5,19 @@ Ryvra Markets is the execution module for crypto, RWA, and metals trading on Ryv
 It defines the baseline for:
 - market intents and order workflows
 - quote validation and execution routing
+- deterministic Uniswap quote adapter behind canonical `QuoteProvider`
+- deterministic custom fee engine (`RawQuote` -> `FeeBreakdown` + `NetQuote`)
 - post-trade settlement hooks
 - canonical IDs: `reference_id`, `idempotency_key`, `correlation_id`
 - canonical policy decisions: `ALLOW`, `DENY`, `REVIEW` with non-empty DENY `reason_codes`
+- canonical domain contracts for staged pipeline execution (`TradeIntent`, `PolicyDecision`, `RawQuote`/`NetQuote`, `FeeBreakdown`, `ExecutionPlan`, `SettlementEvent`)
 
 **Status:** early draft / not production-ready.
 
 ## Architecture Overview
 
 ```text
-client/API -> markets service -> policy checks -> execution adapter -> ledger settlement
+client/API -> intent normalization -> policy gate -> raw quote -> fee layer -> execution planning -> settlement event
 ```
 
 ## Dependencies
