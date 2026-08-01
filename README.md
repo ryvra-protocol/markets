@@ -5,6 +5,7 @@ Ryvra Markets is the execution module for crypto, RWA, and metals trading on Ryv
 It defines the baseline for:
 - market intents and order workflows
 - quote validation and execution routing
+- deterministic Uniswap quote adapter behind canonical `QuoteProvider`
 - post-trade settlement hooks
 - canonical IDs: `reference_id`, `idempotency_key`, `correlation_id`
 - canonical policy decisions: `ALLOW`, `DENY`, `REVIEW` with non-empty DENY `reason_codes`

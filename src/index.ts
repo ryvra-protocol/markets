@@ -8,6 +8,7 @@ export * from "./types/event-envelope.js";
 export * from "./adapters/execution-adapter.js";
 export * from "./adapters/ledger-client.js";
 export * from "./adapters/policy-client.js";
+export * from "./adapters/uniswap/index.js";
 
 export * from "./routing/execution-router.js";
 
