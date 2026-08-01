@@ -6,6 +6,7 @@ It defines the baseline for:
 - market intents and order workflows
 - quote validation and execution routing
 - deterministic Uniswap quote adapter behind canonical `QuoteProvider`
+- deterministic custom fee engine (`RawQuote` -> `FeeBreakdown` + `NetQuote`)
 - post-trade settlement hooks
 - canonical IDs: `reference_id`, `idempotency_key`, `correlation_id`
 - canonical policy decisions: `ALLOW`, `DENY`, `REVIEW` with non-empty DENY `reason_codes`

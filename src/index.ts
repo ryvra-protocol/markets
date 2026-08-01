@@ -11,6 +11,7 @@ export * from "./adapters/policy-client.js";
 export * from "./adapters/uniswap/index.js";
 
 export * from "./routing/execution-router.js";
+export * from "./fees/index.js";
 
 export * from "./service/markets-service.js";
 export * from "./service/order-state-machine.js";
