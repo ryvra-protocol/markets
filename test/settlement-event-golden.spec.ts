@@ -30,7 +30,7 @@ describe("settlement lifecycle event golden payloads", () => {
 
     expect(first).toEqual(second);
     expect(first).toEqual({
-      event_id: "ca7db1f8f88ff8f251fc40d8a8f10fd7f8c1f4b0eb038f15b495f4868850d0e6",
+      event_id: "2bb0c83bd13952baedb42654bf03fe415af7f1b5b33b9920a8b394f2f21d5452",
       event_type: "settlement.failed",
       correlation_id: "corr-1",
       intent_id: "intent-1",

@@ -128,7 +128,9 @@ describe("settlement tracker integration", () => {
     const observedTypes: string[] = [];
     const tracker = new SettlementTracker(
       { pendingTimeoutMs: 1000, missingReceiptTimeoutMs: 1000, finalityConfirmations: 12, maxPollAttempts: 1 },
-      (event) => observedTypes.push(event.event_type),
+      (event) => {
+        observedTypes.push(event.event_type);
+      },
       undefined,
       fixedNow("2026-01-01T00:00:00.000Z")
     );
@@ -170,7 +172,9 @@ describe("settlement tracker integration", () => {
 
     const tracker = new SettlementTracker(
       { pendingTimeoutMs: 10, missingReceiptTimeoutMs: 0, finalityConfirmations: 12, maxPollAttempts: 1 },
-      (event) => observedTypes.push(event.event_type),
+      (event) => {
+        observedTypes.push(event.event_type);
+      },
       undefined,
       fixedNow("2026-01-01T00:00:00.000Z")
     );
