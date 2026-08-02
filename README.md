@@ -55,3 +55,30 @@ pnpm build
   - `markets.execution.build.failed`
 
 See `/home/runner/work/markets/markets/docs/execution-tx-builder.md` for contract, guardrail matrix, and error taxonomy.
+
+## Settlement events + reconciliation hooks + ops readiness (PR6)
+
+- Typed settlement lifecycle events are implemented with deterministic payload normalization:
+  - `settlement.submitted`
+  - `settlement.pending`
+  - `settlement.confirmed`
+  - `settlement.failed`
+  - `settlement.reorg_detected`
+  - `settlement.finalized`
+- Reconciliation hooks provide machine-readable status and discrepancy categories:
+  - `amount_mismatch`
+  - `fee_mismatch`
+  - `status_mismatch`
+  - `missing_receipt`
+  - `stale_pending`
+- Settlement tracking includes explicit failure handling for dropped/pending-too-long tx, reverted tx, and missing receipt timeout, with retry and escalation hook points.
+- Structured settlement observability includes correlation continuity and minimal metrics:
+  - `settlement_success_total`
+  - `settlement_failure_total`
+  - `reconciliation_mismatch_total`
+  - `settlement_time_to_confirm_ms`
+
+Ops readiness docs:
+- `/home/runner/work/markets/markets/docs/ops/settlement-runbook.md`
+- `/home/runner/work/markets/markets/docs/ops/settlement-incident-checklist.md`
+- `/home/runner/work/markets/markets/docs/ops/settlement-config-reference.md`

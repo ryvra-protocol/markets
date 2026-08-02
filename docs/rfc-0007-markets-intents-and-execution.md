@@ -137,3 +137,14 @@ Failure handling is event-driven and non-destructive:
 - include reason codes and correlation ids for observability and audits
 
 This preserves forensic traceability and policy/risk explainability.
+
+## PR6 implementation notes
+
+- Settlement lifecycle now emits typed transitions:
+  - `settlement.submitted`, `settlement.pending`, `settlement.confirmed`, `settlement.failed`, `settlement.reorg_detected`, `settlement.finalized`
+- Reconciliation compares intended execution, submitted tx, and on-chain receipts with typed discrepancy categories:
+  - `amount_mismatch`, `fee_mismatch`, `status_mismatch`, `missing_receipt`, `stale_pending`
+- Retry/escalation hook points are provided for:
+  - dropped tx
+  - pending-too-long tx
+  - missing receipt timeout

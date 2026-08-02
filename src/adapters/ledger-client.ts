@@ -5,6 +5,14 @@ export interface SettlementRequest {
   correlation_id: string;
 }
 
+export interface SettlementResponse {
+  settlement_id: string;
+  chainId?: number;
+  txHash?: string;
+  blockNumber?: number;
+  status?: "submitted" | "pending" | "confirmed" | "finalized" | "failed";
+}
+
 export interface LedgerClient {
-  settle(request: SettlementRequest): Promise<{ settlement_id: string }>;
+  settle(request: SettlementRequest): Promise<SettlementResponse>;
 }

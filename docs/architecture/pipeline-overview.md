@@ -7,7 +7,8 @@ Canonical execution pipeline:
 3. Raw quote acquisition (`RawQuote` via `QuoteProvider`)
 4. Custom fee application (`FeeEngine` -> `FeeBreakdown` + `NetQuote`)
 5. Execution planning (`ExecutionPlan` via `ExecutionPlanner`)
-6. Settlement emission (`SettlementEvent` via `SettlementEmitter`)
+6. Settlement emission + tracking (`SettlementEvent`/`settlement.*` lifecycle events)
+7. Reconciliation (`intended` vs `submitted` vs `on-chain` outcome)
 
 Canonical identifiers:
 
@@ -16,6 +17,15 @@ Canonical identifiers:
 - `execution_id`
 - `correlation_id`
 - `idempotency_key`
+
+Settlement lifecycle events (PR6):
+
+- `settlement.submitted`
+- `settlement.pending`
+- `settlement.confirmed`
+- `settlement.failed`
+- `settlement.reorg_detected`
+- `settlement.finalized`
 
 Design constraints in this phase:
 

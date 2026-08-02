@@ -6,7 +6,11 @@ import type { PolicyClient, PolicyDecision } from "../src/adapters/policy-client
 import { ensurePolicyReasonCodes } from "../src/adapters/policy-client.js";
 import { ExecutionRouter } from "../src/routing/execution-router.js";
 import type { ExecutionBuildInput, ExecutionBuildResult } from "../src/service/execution-tx-builder.js";
-import { MarketsService, PolicyDeniedError } from "../src/service/markets-service.js";
+import {
+  MarketsService,
+  PolicyDeniedError,
+  type SettlementSubmissionObservedEvent
+} from "../src/service/markets-service.js";
 import { QuoteValidator } from "../src/service/quote-validator.js";
 import type { MarketIntent } from "../src/types/market-intent.js";
 
@@ -402,6 +406,75 @@ describe("policy + idempotency contract alignment", () => {
     const reviewResult = await reviewService.submitIntentV2(intent);
     expect(reviewResult.accepted).toBe(false);
     expect(buildCount).toBe(0);
+  });
+
+  it("emits settlement submission event with correlation continuity", async () => {
+    const observed: SettlementSubmissionObservedEvent[] = [];
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({
+        decision: "ALLOW",
+        policy_version: "policy-risk@2.0.0",
+        explanation: "Allowed"
+      }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => ({
+        route_id: "route-1",
+        status: "accepted",
+        reference_id: "ref-1",
+        correlation_id: "corr-1"
+      }),
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({
+        settlement_id: "settle-1",
+        chainId: 1,
+        txHash: "0xabc",
+        blockNumber: 44,
+        status: "submitted"
+      })
+    };
+
+    const service = new MarketsService(
+      policy,
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      (event) => {
+        observed.push(event);
+      }
+    );
+    const result = await service.submitIntentV2(intent);
+
+    expect(result.accepted).toBe(true);
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      event_type: "settlement.submitted",
+      settlement_id: "settle-1",
+      intent_id: "ref-1",
+      execution_id: "route-1",
+      correlation_id: "corr-1",
+      chainId: 1,
+      txHash: "0xabc",
+      blockNumber: 44,
+      status: "submitted"
+    });
   });
 });
 
