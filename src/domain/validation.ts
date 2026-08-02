@@ -31,9 +31,15 @@ export function assertValidPolicyDecision(decision: PolicyDecision): void {
   if (!decision.policy_version.trim()) {
     throw new Error("policy_version is required");
   }
+  if (!decision.explanation.trim()) {
+    throw new Error("explanation is required");
+  }
 
   if (decision.decision === "DENY" && decision.reason_codes.length === 0) {
     throw new Error("DENY decisions require reason_codes");
+  }
+  if (decision.decision === "REVIEW" && decision.reason_codes.length === 0) {
+    throw new Error("REVIEW decisions require reason_codes");
   }
 }
 

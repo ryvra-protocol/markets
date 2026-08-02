@@ -38,11 +38,23 @@ describe("domain validation invariants", () => {
   it("requires reason_codes on DENY decisions", () => {
     const deny: PolicyDecision = {
       decision: "DENY",
-      reason_codes: [],
+      reason_codes: [] as unknown as [string, ...string[]],
+      explanation: "Denied",
       policy_version: "policy-risk@1.0.0"
     };
 
     expect(() => assertValidPolicyDecision(deny)).toThrow("DENY decisions require reason_codes");
+  });
+
+  it("requires explanation on policy decisions", () => {
+    const deny: PolicyDecision = {
+      decision: "DENY",
+      reason_codes: ["policy_denied"],
+      explanation: " ",
+      policy_version: "policy-risk@1.0.0"
+    };
+
+    expect(() => assertValidPolicyDecision(deny)).toThrow("explanation is required");
   });
 
   it("enforces fee totals arithmetic integrity", () => {

@@ -6,7 +6,7 @@
   - side, assets, exact-in/exact-out amount, wallet/account context, chain, slippage, deadline, metadata
   - canonical IDs: `intent_id`, `correlation_id`, `idempotency_key`
 - `PolicyDecision` (`src/domain/policy-decision.ts`)
-  - `decision`, `reason_codes`, `policy_version`
+  - `decision`, `reason_codes`, `policy_version`, `explanation`
 - `RawQuote` and `NetQuote` (`src/domain/quote.ts`)
   - route hops, price impact/gas estimates (optional), quote freshness metadata
 - `FeeBreakdown` (`src/domain/fee-breakdown.ts`)

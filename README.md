@@ -37,3 +37,10 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Policy gate compatibility
+
+- `MarketsService.submitIntentV2` is the PR4-native pre-trade entrypoint.
+  - `DENY` fails fast with typed `PolicyDeniedError`.
+  - `REVIEW` returns a `review_required` result and halts routing.
+- `MarketsService.submitIntent` remains as a compatibility shim and maps policy outcomes to legacy `{ accepted: false, reason_codes }`.
