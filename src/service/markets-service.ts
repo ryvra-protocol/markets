@@ -68,6 +68,21 @@ export interface PolicyDecisionObservedEvent {
 
 export type PolicyDecisionObserver = (event: PolicyDecisionObservedEvent) => void | Promise<void>;
 
+export interface SettlementSubmissionObservedEvent {
+  event_type: "settlement.submitted";
+  timestamp: string;
+  settlement_id: string;
+  intent_id: string;
+  execution_id: string;
+  correlation_id: string;
+  chainId?: number;
+  txHash?: string;
+  blockNumber?: number;
+  status: "submitted";
+}
+
+export type SettlementSubmissionObserver = (event: SettlementSubmissionObservedEvent) => void | Promise<void>;
+
 export class MarketsService {
   private readonly idempotentResults = new Map<string, SubmitIntentV2Result>();
   private readonly idempotentErrors = new Map<string, PolicyDeniedError>();
@@ -78,7 +93,8 @@ export class MarketsService {
     private readonly quoteValidator: QuoteValidator,
     private readonly ledger: LedgerClient,
     private readonly policyDecisionObserver?: PolicyDecisionObserver,
-    private readonly executionTxBuilder?: ExecutionTxBuildClient
+    private readonly executionTxBuilder?: ExecutionTxBuildClient,
+    private readonly settlementSubmissionObserver?: SettlementSubmissionObserver
   ) {}
 
   async submitIntent(intent: MarketIntent): Promise<SubmitIntentResult> {
@@ -164,12 +180,13 @@ export class MarketsService {
       return routeRejectedResult;
     }
 
-    await this.ledger.settle({
+    const settlement = await this.ledger.settle({
       order_id: intent.reference_id,
       route_id: route.route_id,
       reference_id: route.reference_id,
       correlation_id: route.correlation_id
     });
+    await this.observeSettlementSubmission(intent, route.route_id, route.correlation_id, settlement);
 
     const acceptedResult = {
       accepted: true as const,
@@ -179,6 +196,30 @@ export class MarketsService {
     };
     this.idempotentResults.set(idempotencyCacheKey, acceptedResult);
     return acceptedResult;
+  }
+
+  private async observeSettlementSubmission(
+    intent: MarketIntent,
+    executionId: string,
+    correlationId: string,
+    settlement: { settlement_id: string; chainId?: number; txHash?: string; blockNumber?: number }
+  ): Promise<void> {
+    if (!this.settlementSubmissionObserver) {
+      return;
+    }
+
+    await this.settlementSubmissionObserver({
+      event_type: "settlement.submitted",
+      timestamp: new Date().toISOString(),
+      settlement_id: settlement.settlement_id,
+      intent_id: intent.reference_id,
+      execution_id: executionId,
+      correlation_id: correlationId,
+      chainId: settlement.chainId,
+      txHash: settlement.txHash,
+      blockNumber: settlement.blockNumber,
+      status: "submitted"
+    });
   }
 
   private toPreTradePolicyInput(intent: MarketIntent): PreTradePolicyInput {

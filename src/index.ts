@@ -17,3 +17,4 @@ export * from "./service/markets-service.js";
 export * from "./service/order-state-machine.js";
 export * from "./service/quote-validator.js";
 export * from "./service/execution-tx-builder.js";
+export * from "./service/settlement-reconciliation.js";

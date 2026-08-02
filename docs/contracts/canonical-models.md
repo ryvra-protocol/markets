@@ -15,6 +15,12 @@
   - route summary, bounds (`minOut`/`maxIn`), expiry, calldata envelope placeholder, IDs
 - `SettlementEvent` (`src/domain/settlement-event.ts`)
   - ledger-settlement friendly envelope with quote, fee, policy, and execution metadata
+- `SettlementLifecycleEvent` (`src/domain/settlement-event.ts`)
+  - typed settlement lifecycle transitions with stable schema:
+    - `correlation_id`, `intent_id`, `execution_id`
+    - `chainId`, `txHash`, `blockNumber`
+    - `status`, `timestamp`, optional `reason_code`/`error_code`
+  - deterministic normalization + metadata sanitization
 
 ## Domain contracts
 
@@ -25,6 +31,12 @@ Defined in `src/domain/contracts.ts`:
 - `PolicyClient`
 - `ExecutionPlanner`
 - `SettlementEmitter`
+
+Settlement reconciliation/tracking contracts (PR6) in `src/service/settlement-reconciliation.ts`:
+
+- `reconcileSettlement(...)` -> `SettlementReconciliationResult`
+- discrepancy categories: `amount_mismatch`, `fee_mismatch`, `status_mismatch`, `missing_receipt`, `stale_pending`
+- `SettlementTracker` with retry/escalation hooks and minimal metrics hooks
 
 ## Validation invariants
 
