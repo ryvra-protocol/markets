@@ -16,3 +16,4 @@ export * from "./fees/index.js";
 export * from "./service/markets-service.js";
 export * from "./service/order-state-machine.js";
 export * from "./service/quote-validator.js";
+export * from "./service/execution-tx-builder.js";
