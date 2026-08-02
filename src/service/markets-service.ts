@@ -7,7 +7,13 @@ import type { PolicyClient } from "../adapters/policy-client.js";
 import type { TradeIntent } from "../domain/trade-intent.js";
 import type { ExecutionRouter } from "../routing/execution-router.js";
 import type { MarketIntent } from "../types/market-intent.js";
+import type { Quote } from "../types/quote.js";
 import type { QuoteValidator } from "./quote-validator.js";
+import {
+  QuoteConstraintViolationError,
+  type ExecutionBuildInput,
+  type ExecutionTxBuildClient
+} from "./execution-tx-builder.js";
 
 export type SubmitIntentResult =
   | { accepted: true; route_id: string; reference_id: string; correlation_id: string }
@@ -71,7 +77,8 @@ export class MarketsService {
     private readonly router: ExecutionRouter,
     private readonly quoteValidator: QuoteValidator,
     private readonly ledger: LedgerClient,
-    private readonly policyDecisionObserver?: PolicyDecisionObserver
+    private readonly policyDecisionObserver?: PolicyDecisionObserver,
+    private readonly executionTxBuilder?: ExecutionTxBuildClient
   ) {}
 
   async submitIntent(intent: MarketIntent): Promise<SubmitIntentResult> {
@@ -143,6 +150,9 @@ export class MarketsService {
       this.idempotentResults.set(idempotencyCacheKey, invalidQuoteResult);
       return invalidQuoteResult;
     }
+    if (this.executionTxBuilder) {
+      await this.executionTxBuilder.build(this.toExecutionBuildInput(intent, quote, policyDecision));
+    }
 
     const route = await this.router.route(intent, quote);
     if (route.status !== "accepted") {
@@ -203,6 +213,71 @@ export class MarketsService {
       slippageBps: intent.max_slippage_bps,
       deadline,
       metadata: intent.meta
+    };
+  }
+
+  private toExecutionBuildInput(
+    intent: MarketIntent,
+    quote: Quote,
+    policyDecision: {
+      decision: "ALLOW";
+      policy_version: string;
+      reason_codes?: readonly `policy_${string}`[];
+      explanation: string;
+    }
+  ): ExecutionBuildInput {
+    const metadata = intent.meta ?? {};
+    const required = (key: string): string => {
+      const value = metadata[key]?.trim();
+      if (!value) {
+        throw new QuoteConstraintViolationError(`missing required execution metadata: ${key}`);
+      }
+      return value;
+    };
+    const requiredInteger = (key: string): number => {
+      const value = Number(required(key));
+      if (!Number.isInteger(value)) {
+        throw new QuoteConstraintViolationError(`invalid integer execution metadata: ${key}`);
+      }
+      return value;
+    };
+
+    const createdAt = intent.created_at ? new Date(intent.created_at) : new Date();
+    const createdAtMs = Number.isNaN(createdAt.getTime()) ? Date.now() : createdAt.getTime();
+
+    return {
+      correlationId: intent.correlation_id,
+      idempotencyKey: intent.idempotency_key,
+      policyDecision,
+      chainId: requiredInteger("execution_chain_id"),
+      target: required("execution_target"),
+      calldata: required("execution_calldata"),
+      value: (metadata.execution_value ?? "0").trim(),
+      recipient: required("execution_recipient"),
+      slippageBps: intent.max_slippage_bps,
+      deadline: new Date(createdAtMs + intent.ttl_ms).toISOString(),
+      amountType: (metadata.execution_amount_type === "exactOut" ? "exactOut" : "exactIn") as "exactIn" | "exactOut",
+      amountIn: required("execution_amount_in"),
+      amountOut: required("execution_amount_out"),
+      minOut: metadata.execution_min_out?.trim(),
+      maxIn: metadata.execution_max_in?.trim(),
+      nonce: metadata.execution_nonce?.trim(),
+      inputToken: {
+        symbol: intent.side === "buy" ? quote.quote_asset : quote.base_asset,
+        address: required("execution_input_token_address"),
+        decimals: requiredInteger("execution_input_token_decimals")
+      },
+      outputToken: {
+        symbol: intent.side === "buy" ? quote.base_asset : quote.quote_asset,
+        address: required("execution_output_token_address"),
+        decimals: requiredInteger("execution_output_token_decimals")
+      },
+      quote: {
+        amountIn: required("execution_quote_amount_in"),
+        amountOut: required("execution_quote_amount_out"),
+        inputTokenDecimals: requiredInteger("execution_quote_input_token_decimals"),
+        outputTokenDecimals: requiredInteger("execution_quote_output_token_decimals")
+      }
     };
   }
 

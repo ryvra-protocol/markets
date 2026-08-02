@@ -44,3 +44,14 @@ pnpm build
   - `DENY` fails fast with typed `PolicyDeniedError`.
   - `REVIEW` returns a `review_required` result and halts routing.
 - `MarketsService.submitIntent` remains as a compatibility shim and maps policy outcomes to legacy `{ accepted: false, reason_codes }`.
+
+## Execution tx builder + guardrails (PR5)
+
+- Deterministic execution tx payload construction is implemented in `ExecutionTxBuilder`.
+- Hard guardrails cover slippage, deadlines, quote/amount sanity, chain/recipient, token integrity, and replay protection.
+- Builder emits sanitized structured events:
+  - `markets.execution.build.started`
+  - `markets.execution.build.succeeded`
+  - `markets.execution.build.failed`
+
+See `/home/runner/work/markets/markets/docs/execution-tx-builder.md` for contract, guardrail matrix, and error taxonomy.
