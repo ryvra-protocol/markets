@@ -101,7 +101,7 @@ export interface ExecutionBuildQuoteConstraints {
 export interface ExecutionBuildInput {
   correlationId: string;
   idempotencyKey?: string;
-  policyDecision: PolicyDecision;
+  policyDecision: Extract<PolicyDecision, { decision: "ALLOW" }>;
   chainId: number;
   target: string;
   calldata: string;

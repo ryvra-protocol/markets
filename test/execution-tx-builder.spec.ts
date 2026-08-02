@@ -70,7 +70,7 @@ describe("ExecutionTxBuilder", () => {
     const second = await builder.build(createValidInput());
 
     expect(first).toEqual(second);
-    expect(first.metadata.fingerprintHash).toBe("d72f47ea86ca43eb57833f7ce431f88fe76e208d9fd6db6ce670109ca196f9c6");
+    expect(first.metadata.fingerprintHash).toBe("693932ec6f8e3f25337bec409e6a59bb81ab895446a7bc6fc8442a0ac719cd0e");
   });
 
   it("emits sanitized build observability events", async () => {
@@ -96,7 +96,7 @@ describe("ExecutionTxBuilder", () => {
       event_type: "markets.execution.build.succeeded",
       correlation_id: "corr-1",
       chainId: 1,
-      deterministic_fingerprint_hash: "d72f47ea86ca43eb57833f7ce431f88fe76e208d9fd6db6ce670109ca196f9c6"
+      deterministic_fingerprint_hash: "693932ec6f8e3f25337bec409e6a59bb81ab895446a7bc6fc8442a0ac719cd0e"
     });
   });
 

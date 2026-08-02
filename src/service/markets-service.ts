@@ -220,9 +220,9 @@ export class MarketsService {
     intent: MarketIntent,
     quote: Quote,
     policyDecision: {
-      decision: "ALLOW" | "DENY" | "REVIEW";
+      decision: "ALLOW";
       policy_version: string;
-      reason_codes?: readonly string[];
+      reason_codes?: readonly `policy_${string}`[];
       explanation: string;
     }
   ): ExecutionBuildInput {
