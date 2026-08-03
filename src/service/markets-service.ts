@@ -14,6 +14,8 @@ import {
   type ExecutionBuildInput,
   type ExecutionTxBuildClient
 } from "./execution-tx-builder.js";
+import type { UnifiedAssetPair } from "./unified-asset-service.js";
+import type { UnifiedAssetService } from "./unified-asset-service.js";
 
 export type SubmitIntentResult =
   | { accepted: true; route_id: string; reference_id: string; correlation_id: string }
@@ -83,6 +85,20 @@ export interface SettlementSubmissionObservedEvent {
 
 export type SettlementSubmissionObserver = (event: SettlementSubmissionObservedEvent) => void | Promise<void>;
 
+export interface AssetNormalizationObservedEvent {
+  event_type: "markets.asset.normalization";
+  timestamp: string;
+  correlation_id: string;
+  reference_id: string;
+  chain_id: number;
+  assets: {
+    base_asset_canonical_id: string;
+    quote_asset_canonical_id: string;
+  };
+}
+
+export type AssetNormalizationObserver = (event: AssetNormalizationObservedEvent) => void | Promise<void>;
+
 export class MarketsService {
   private readonly idempotentResults = new Map<string, SubmitIntentV2Result>();
   private readonly idempotentErrors = new Map<string, PolicyDeniedError>();
@@ -94,7 +110,9 @@ export class MarketsService {
     private readonly ledger: LedgerClient,
     private readonly policyDecisionObserver?: PolicyDecisionObserver,
     private readonly executionTxBuilder?: ExecutionTxBuildClient,
-    private readonly settlementSubmissionObserver?: SettlementSubmissionObserver
+    private readonly settlementSubmissionObserver?: SettlementSubmissionObserver,
+    private readonly unifiedAssetService?: UnifiedAssetService,
+    private readonly assetNormalizationObserver?: AssetNormalizationObserver
   ) {}
 
   async submitIntent(intent: MarketIntent): Promise<SubmitIntentResult> {
@@ -132,7 +150,14 @@ export class MarketsService {
       return replayResult;
     }
 
-    const policyInput = this.toPreTradePolicyInput(intent);
+    const executionChainId = this.resolveExecutionChainId(intent);
+    const unifiedAssetContext = await this.resolveUnifiedAssetContext(intent, executionChainId);
+    const policyInput = this.toPreTradePolicyInput(
+      intent,
+      unifiedAssetContext?.assets,
+      unifiedAssetContext?.exposure,
+      executionChainId
+    );
     const rawPolicyDecision = this.policy.pre_trade_check_with_context
       ? await this.policy.pre_trade_check_with_context(policyInput)
       : await this.policy.pre_trade_check(intent);
@@ -166,8 +191,11 @@ export class MarketsService {
       this.idempotentResults.set(idempotencyCacheKey, invalidQuoteResult);
       return invalidQuoteResult;
     }
+    await this.observeAssetNormalization(intent, executionChainId, unifiedAssetContext?.assets);
     if (this.executionTxBuilder) {
-      await this.executionTxBuilder.build(this.toExecutionBuildInput(intent, quote, policyDecision));
+      await this.executionTxBuilder.build(
+        this.toExecutionBuildInput(intent, quote, policyDecision, unifiedAssetContext?.assets)
+      );
     }
 
     const route = await this.router.route(intent, quote);
@@ -222,35 +250,44 @@ export class MarketsService {
     });
   }
 
-  private toPreTradePolicyInput(intent: MarketIntent): PreTradePolicyInput {
+  private toPreTradePolicyInput(
+    intent: MarketIntent,
+    assets?: UnifiedAssetPair,
+    exposure?: PreTradePolicyInput["domain_context"]["exposure_snapshot"],
+    chainId?: number
+  ): PreTradePolicyInput {
     return {
       intent,
       domain_context: {
-        trade_intent: this.toTradeIntent(intent)
+        trade_intent: this.toTradeIntent(intent, assets, chainId),
+        unified_assets: assets,
+        exposure_snapshot: exposure
       }
     };
   }
 
-  private toTradeIntent(intent: MarketIntent): TradeIntent {
+  private toTradeIntent(intent: MarketIntent, assets?: UnifiedAssetPair, chainId?: number): TradeIntent {
     const createdAt = intent.created_at ? new Date(intent.created_at) : new Date();
     const createdAtMs = Number.isNaN(createdAt.getTime()) ? Date.now() : createdAt.getTime();
     const deadline = new Date(createdAtMs + intent.ttl_ms).toISOString();
 
     const isBuy = intent.side === "buy";
+    const baseAsset = assets?.base_asset.canonical_id ?? intent.base_asset;
+    const quoteAsset = assets?.quote_asset.canonical_id ?? intent.quote_asset;
     return {
       intent_id: intent.reference_id,
       correlation_id: intent.correlation_id,
       idempotency_key: intent.idempotency_key,
       side: intent.side,
-      pair: `${intent.base_asset}/${intent.quote_asset}`,
-      assetIn: isBuy ? intent.quote_asset : intent.base_asset,
-      assetOut: isBuy ? intent.base_asset : intent.quote_asset,
+      pair: `${baseAsset}/${quoteAsset}`,
+      assetIn: isBuy ? quoteAsset : baseAsset,
+      assetOut: isBuy ? baseAsset : quoteAsset,
       amount: {
         type: "exactIn",
         value: String(intent.size)
       },
       accountId: intent.account_id,
-      chainId: 0,
+      chainId: chainId ?? 0,
       slippageBps: intent.max_slippage_bps,
       deadline,
       metadata: intent.meta
@@ -265,7 +302,8 @@ export class MarketsService {
       policy_version: string;
       reason_codes?: readonly `policy_${string}`[];
       explanation: string;
-    }
+    },
+    assets?: UnifiedAssetPair
   ): ExecutionBuildInput {
     const metadata = intent.meta ?? {};
     const required = (key: string): string => {
@@ -304,12 +342,12 @@ export class MarketsService {
       maxIn: metadata.execution_max_in?.trim(),
       nonce: metadata.execution_nonce?.trim(),
       inputToken: {
-        symbol: intent.side === "buy" ? quote.quote_asset : quote.base_asset,
+        symbol: intent.side === "buy" ? (assets?.quote_asset.symbol ?? quote.quote_asset) : (assets?.base_asset.symbol ?? quote.base_asset),
         address: required("execution_input_token_address"),
         decimals: requiredInteger("execution_input_token_decimals")
       },
       outputToken: {
-        symbol: intent.side === "buy" ? quote.base_asset : quote.quote_asset,
+        symbol: intent.side === "buy" ? (assets?.base_asset.symbol ?? quote.base_asset) : (assets?.quote_asset.symbol ?? quote.quote_asset),
         address: required("execution_output_token_address"),
         decimals: requiredInteger("execution_output_token_decimals")
       },
@@ -352,6 +390,58 @@ export class MarketsService {
         has_quote: Boolean(input.domain_context.quote),
         has_fee_breakdown: Boolean(input.domain_context.fee_breakdown),
         has_execution_plan: Boolean(input.domain_context.execution_plan)
+      }
+    });
+  }
+
+  private resolveExecutionChainId(intent: MarketIntent): number {
+    const value = intent.meta?.execution_chain_id?.trim();
+    if (!value) {
+      return 0;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return 0;
+    }
+    return parsed;
+  }
+
+  private async resolveUnifiedAssetContext(
+    intent: MarketIntent,
+    chainId: number
+  ): Promise<Awaited<ReturnType<UnifiedAssetService["normalize_pre_trade_assets"]>> | undefined> {
+    if (!this.unifiedAssetService) {
+      return undefined;
+    }
+
+    return this.unifiedAssetService.normalize_pre_trade_assets({
+      base_asset: intent.base_asset,
+      quote_asset: intent.quote_asset,
+      chain_id: chainId,
+      account_id: intent.account_id,
+      correlation_id: intent.correlation_id
+    });
+  }
+
+  private async observeAssetNormalization(
+    intent: MarketIntent,
+    chainId: number,
+    assets?: UnifiedAssetPair
+  ): Promise<void> {
+    if (!this.assetNormalizationObserver || !assets) {
+      return;
+    }
+
+    await this.assetNormalizationObserver({
+      event_type: "markets.asset.normalization",
+      timestamp: new Date().toISOString(),
+      correlation_id: intent.correlation_id,
+      reference_id: intent.reference_id,
+      chain_id: chainId,
+      assets: {
+        base_asset_canonical_id: assets.base_asset.canonical_id,
+        quote_asset_canonical_id: assets.quote_asset.canonical_id
       }
     });
   }

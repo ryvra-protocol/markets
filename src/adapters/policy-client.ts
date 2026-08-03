@@ -2,6 +2,7 @@ import type { ExecutionPlan } from "../domain/execution-plan.js";
 import type { FeeBreakdown } from "../domain/fee-breakdown.js";
 import type { RawQuote } from "../domain/quote.js";
 import type { TradeIntent } from "../domain/trade-intent.js";
+import type { ExposureSnapshot, UnifiedAsset } from "../domain/unified-asset.js";
 import type { MarketIntent } from "../types/market-intent.js";
 
 export const POLICY_REASON_CODE_PREFIX = "policy_" as const;
@@ -31,6 +32,11 @@ export interface PolicyDomainContext {
   quote?: RawQuote;
   fee_breakdown?: FeeBreakdown;
   execution_plan?: ExecutionPlan;
+  unified_assets?: {
+    base_asset: UnifiedAsset;
+    quote_asset: UnifiedAsset;
+  };
+  exposure_snapshot?: ExposureSnapshot;
 }
 
 export interface PreTradePolicyInput {

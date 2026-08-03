@@ -21,6 +21,11 @@
     - `chainId`, `txHash`, `blockNumber`
     - `status`, `timestamp`, optional `reason_code`/`error_code`
   - deterministic normalization + metadata sanitization
+- Unified asset contracts (`src/domain/unified-asset.ts`)
+  - `UnifiedAsset`
+  - `UnifiedBalance`
+  - `AssetPosition`
+  - `ExposureSnapshot`
 
 ## Domain contracts
 
