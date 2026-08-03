@@ -30,7 +30,9 @@ function normalizeAsset(input: AssetRegistryResolvedAsset): UnifiedAsset {
   const address = normalizeText(input.address)?.toLowerCase();
   const name = normalizeText(input.name);
   const aliases =
-    [...new Set(input.aliases?.map((alias) => alias.trim().toUpperCase()).filter((alias) => alias.length > 0) ?? [])]
+    input.aliases
+      ?.map((alias) => alias.trim().toUpperCase())
+      .filter((alias) => alias.length > 0)
       .sort() ?? [];
   const metadata = input.metadata
     ? Object.fromEntries(
