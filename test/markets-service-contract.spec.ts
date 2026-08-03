@@ -733,8 +733,12 @@ describe("policy + idempotency contract alignment", () => {
         execution_value: "0",
         execution_amount_in: "1000000",
         execution_amount_out: "2000000",
+        execution_input_token_address: "0x4444444444444444444444444444444444444444",
+        execution_output_token_address: "0x3333333333333333333333333333333333333333",
         execution_input_token_decimals: "2",
         execution_output_token_decimals: "8",
+        execution_quote_amount_in: "1000000",
+        execution_quote_amount_out: "2000000",
         execution_quote_input_token_decimals: "2",
         execution_quote_output_token_decimals: "8"
       }

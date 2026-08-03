@@ -84,31 +84,32 @@ describe("UnifiedAssetService (golden normalization)", () => {
       }
     });
 
-    it("fails closed on chain mismatch or duplicate canonical pair", async () => {
-      const registry = new MockAssetRegistryClient({
-        BTC: {
-          canonical_id: "asset:btc",
-          symbol: "btc",
-          decimals: 8,
-          chain_id: 10
-        },
-        USD: {
-          canonical_id: "asset:btc",
-          symbol: "usd",
-          decimals: 2,
-          chain_id: 1
-        }
-      });
-      const service = new UnifiedAssetService(registry);
+  });
 
-      await expect(
-        service.normalize_pre_trade_assets({
-          base_asset: "BTC",
-          quote_asset: "USD",
-          chain_id: 1,
-          correlation_id: "corr-1"
-        })
-      ).rejects.toBeInstanceOf(UnifiedAssetNormalizationError);
+  it("fails closed on chain mismatch or duplicate canonical pair", async () => {
+    const registry = new MockAssetRegistryClient({
+      BTC: {
+        canonical_id: "asset:btc",
+        symbol: "btc",
+        decimals: 8,
+        chain_id: 10
+      },
+      USD: {
+        canonical_id: "asset:btc",
+        symbol: "usd",
+        decimals: 2,
+        chain_id: 1
+      }
     });
+    const service = new UnifiedAssetService(registry);
+
+    await expect(
+      service.normalize_pre_trade_assets({
+        base_asset: "BTC",
+        quote_asset: "USD",
+        chain_id: 1,
+        correlation_id: "corr-1"
+      })
+    ).rejects.toBeInstanceOf(UnifiedAssetNormalizationError);
   });
 });

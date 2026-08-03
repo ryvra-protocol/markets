@@ -234,19 +234,7 @@ export class MarketsService {
       executionChainId
     );
 
-    let policyDecision:
-      | {
-          decision: "ALLOW";
-          policy_version: string;
-          reason_codes?: readonly `policy_${string}`[];
-          explanation: string;
-        }
-      | {
-          decision: "DENY" | "REVIEW";
-          policy_version: string;
-          reason_codes?: readonly string[];
-          explanation: string;
-        };
+    let policyDecision: ReturnType<typeof normalizePolicyDecision>;
     try {
       const rawPolicyDecision = this.policy.pre_trade_check_with_context
         ? await this.policy.pre_trade_check_with_context(policyInput)
@@ -294,11 +282,14 @@ export class MarketsService {
       }
 
       await this.observeAssetNormalization(intent, executionChainId, unifiedAssetContext?.assets);
-      const normalizedExecution = this.toNormalizedExecutionMetadata(intent, executionChainId, unifiedAssetContext?.assets);
+      const requiresExecutionMetadata = Boolean(this.executionTxBuilder || this.aa4337UserOpService);
+      const normalizedExecution = requiresExecutionMetadata
+        ? this.toNormalizedExecutionMetadata(intent, executionChainId, unifiedAssetContext?.assets)
+        : undefined;
 
       if (this.executionTxBuilder) {
         await this.executionTxBuilder.build(
-          this.toExecutionBuildInput(intent, quote, policyDecision, normalizedExecution, unifiedAssetContext?.assets)
+          this.toExecutionBuildInput(intent, quote, policyDecision, normalizedExecution!, unifiedAssetContext?.assets)
         );
       }
       if (this.aa4337UserOpService && !unifiedAssetContext?.assets) {
@@ -306,7 +297,7 @@ export class MarketsService {
       }
       if (this.aa4337UserOpService && unifiedAssetContext?.assets) {
         await this.aa4337UserOpService.execute(
-          this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, normalizedExecution)
+          this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, normalizedExecution!)
         );
       }
 
