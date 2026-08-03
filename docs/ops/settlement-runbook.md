@@ -12,6 +12,21 @@
 
 ## Common failure modes
 
+### Policy/build/AA integration triage (H2 hardening)
+
+1. **Policy dependency timeout/ambiguous signal**
+   - Symptom: `markets.execution.blocked` with `policy_dependency_timeout` or `policy_dependency_ambiguous`.
+   - Action: treat as fail-closed; do not force execution. Validate policy dependency health and retry only after dependency recovery.
+2. **Unified asset normalization failure**
+   - Symptom: blocked reason code `unified_asset_*` or `execution_guardrail_violation` for chain/token/decimals mismatch.
+   - Action: compare intent metadata against registry-normalized assets (chain, decimals, canonical IDs, token addresses) and correct upstream payload/registry data.
+3. **AA4337 submission/receipt instability**
+   - Symptom: `markets.aa4337.userop.failed` with `aa4337_submission_failed` or `aa4337_receipt_failed`.
+   - Action: retry from same idempotency key boundary; verify submitted user operation hash inclusion before any re-send workflow.
+4. **Execution adapter failure after ALLOW**
+   - Symptom: `markets.execution.failed` with `execution_dependency_timeout` or `execution_dependency_failed`.
+   - Action: inspect quote/build/route adapter health and upstream timeout budgets before replaying intent.
+
 1. **Dropped tx** (`dropped_tx`)
    - Symptom: receipt status becomes dropped or tx disappears from mempool.
    - Action: request retry and escalate if repeated.

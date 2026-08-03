@@ -144,7 +144,10 @@ export function normalizeAa4337BuildRequest(input: Aa4337ExecutionInput): Aa4337
 }
 
 export class Aa4337UserOpService {
-  private readonly idempotencyKeys = new Set<string>();
+  private readonly idempotencyState = new Map<
+    string,
+    { status: "inflight" } | { status: "submitted"; user_operation_hash: string } | { status: "included" }
+  >();
 
   constructor(
     private readonly runtime: AccountsRuntimeClient,
@@ -152,9 +155,27 @@ export class Aa4337UserOpService {
   ) {}
 
   async execute(input: Aa4337ExecutionInput): Promise<void> {
+    const idempotencyKey = input.idempotency_key.trim();
+    if (!idempotencyKey) {
+      throw new Aa4337ExecutionError("idempotency_key is required for aa4337 path", "aa4337_replay_detected");
+    }
+    const currentState = this.idempotencyState.get(idempotencyKey);
+    if (currentState?.status === "inflight") {
+      throw new Aa4337ExecutionError("duplicate idempotency_key for aa4337 path", "aa4337_replay_detected");
+    }
+    if (currentState?.status === "included") {
+      return;
+    }
+
     try {
       this.assertGuardrails(input);
 
+      if (currentState?.status === "submitted") {
+        await this.ensureIncluded(input, currentState.user_operation_hash);
+        return;
+      }
+
+      this.idempotencyState.set(idempotencyKey, { status: "inflight" });
       const buildInput = normalizeAa4337BuildRequest(input);
       const built = await this.runtime.build(buildInput);
       const simulation = await this.runtime.simulate(built);
@@ -166,6 +187,10 @@ export class Aa4337UserOpService {
       }
 
       const sendResult = await this.runtime.send(built);
+      this.idempotencyState.set(idempotencyKey, {
+        status: "submitted",
+        user_operation_hash: sendResult.user_operation_hash
+      });
       await this.observer?.({
         event_type: "markets.aa4337.userop.submitted",
         timestamp: new Date().toISOString(),
@@ -175,29 +200,16 @@ export class Aa4337UserOpService {
         user_operation_hash: sendResult.user_operation_hash
       });
 
-      const receipt = await this.runtime.getReceipt({ user_operation_hash: sendResult.user_operation_hash });
-      if (receipt.status !== "included") {
-        throw new Aa4337ExecutionError(
-          "aa4337 user operation was not included",
-          normalizeReasonCode(receipt.reason_code, "aa4337_receipt_failed") as Aa4337ExecutionError["reason_code"]
-        );
-      }
-
-      await this.observer?.({
-        event_type: "markets.aa4337.userop.included",
-        timestamp: new Date().toISOString(),
-        correlation_id: input.correlation_id,
-        reference_id: input.reference_id,
-        chain_id: input.chain_id,
-        user_operation_hash: sendResult.user_operation_hash,
-        transaction_hash: receipt.transaction_hash,
-        block_number: receipt.block_number
-      });
+      await this.ensureIncluded(input, sendResult.user_operation_hash);
     } catch (error) {
       const normalized =
         error instanceof Aa4337ExecutionError
           ? error
           : new Aa4337ExecutionError("aa4337 user operation submission failed", "aa4337_submission_failed");
+      const state = this.idempotencyState.get(idempotencyKey);
+      if (!state || (state.status === "inflight" && normalized.reason_code !== "aa4337_replay_detected")) {
+        this.idempotencyState.delete(idempotencyKey);
+      }
       await this.observer?.({
         event_type: "markets.aa4337.userop.failed",
         timestamp: new Date().toISOString(),
@@ -208,6 +220,27 @@ export class Aa4337UserOpService {
       });
       throw normalized;
     }
+  }
+
+  private async ensureIncluded(input: Aa4337ExecutionInput, userOperationHash: string): Promise<void> {
+    const receipt = await this.runtime.getReceipt({ user_operation_hash: userOperationHash });
+    if (receipt.status !== "included") {
+      throw new Aa4337ExecutionError(
+        "aa4337 user operation was not included",
+        normalizeReasonCode(receipt.reason_code, "aa4337_receipt_failed") as Aa4337ExecutionError["reason_code"]
+      );
+    }
+    this.idempotencyState.set(input.idempotency_key.trim(), { status: "included" });
+    await this.observer?.({
+      event_type: "markets.aa4337.userop.included",
+      timestamp: new Date().toISOString(),
+      correlation_id: input.correlation_id,
+      reference_id: input.reference_id,
+      chain_id: input.chain_id,
+      user_operation_hash: userOperationHash,
+      transaction_hash: receipt.transaction_hash,
+      block_number: receipt.block_number
+    });
   }
 
   private assertGuardrails(input: Aa4337ExecutionInput): void {
@@ -231,11 +264,6 @@ export class Aa4337UserOpService {
     ) {
       throw new Aa4337ExecutionError("paymaster account is incompatible", "aa4337_paymaster_incompatible");
     }
-
-    if (this.idempotencyKeys.has(input.idempotency_key)) {
-      throw new Aa4337ExecutionError("duplicate idempotency_key for aa4337 path", "aa4337_replay_detected");
-    }
-    this.idempotencyKeys.add(input.idempotency_key);
 
     const expectedInputDecimals = input.side === "buy" ? input.assets.quote_asset.decimals : input.assets.base_asset.decimals;
     const expectedOutputDecimals = input.side === "buy" ? input.assets.base_asset.decimals : input.assets.quote_asset.decimals;

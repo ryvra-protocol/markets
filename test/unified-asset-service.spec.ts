@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AssetRegistryClient, AssetRegistryResolvedAsset } from "../src/adapters/asset-registry-client.js";
-import { UnifiedAssetService } from "../src/service/unified-asset-service.js";
+import { UnifiedAssetNormalizationError, UnifiedAssetService } from "../src/service/unified-asset-service.js";
 
 class MockAssetRegistryClient implements AssetRegistryClient {
   constructor(private readonly byAsset: Record<string, AssetRegistryResolvedAsset>) {}
@@ -83,5 +83,33 @@ describe("UnifiedAssetService (golden normalization)", () => {
         }
       }
     });
+
+  });
+
+  it("fails closed on chain mismatch or duplicate canonical pair", async () => {
+    const registry = new MockAssetRegistryClient({
+      BTC: {
+        canonical_id: "asset:btc",
+        symbol: "btc",
+        decimals: 8,
+        chain_id: 10
+      },
+      USD: {
+        canonical_id: "asset:btc",
+        symbol: "usd",
+        decimals: 2,
+        chain_id: 1
+      }
+    });
+    const service = new UnifiedAssetService(registry);
+
+    await expect(
+      service.normalize_pre_trade_assets({
+        base_asset: "BTC",
+        quote_asset: "USD",
+        chain_id: 1,
+        correlation_id: "corr-1"
+      })
+    ).rejects.toBeInstanceOf(UnifiedAssetNormalizationError);
   });
 });
