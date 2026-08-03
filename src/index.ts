@@ -9,6 +9,7 @@ export * from "./adapters/execution-adapter.js";
 export * from "./adapters/ledger-client.js";
 export * from "./adapters/policy-client.js";
 export * from "./adapters/asset-registry-client.js";
+export * from "./adapters/accounts-runtime-client.js";
 export * from "./adapters/uniswap/index.js";
 
 export * from "./routing/execution-router.js";
@@ -20,3 +21,4 @@ export * from "./service/quote-validator.js";
 export * from "./service/execution-tx-builder.js";
 export * from "./service/settlement-reconciliation.js";
 export * from "./service/unified-asset-service.js";
+export * from "./service/aa4337-userop-service.js";
