@@ -82,3 +82,14 @@ Ops readiness docs:
 - `/home/runner/work/markets/markets/docs/ops/settlement-runbook.md`
 - `/home/runner/work/markets/markets/docs/ops/settlement-incident-checklist.md`
 - `/home/runner/work/markets/markets/docs/ops/settlement-config-reference.md`
+
+## Unified asset model integration (PR7)
+
+- Canonical unified asset contracts are available in `src/domain/unified-asset.ts`:
+  - `UnifiedAsset`
+  - `UnifiedBalance`
+  - `AssetPosition`
+  - `ExposureSnapshot`
+- Pre-trade flow can resolve canonical assets through `AssetRegistryClient` and `UnifiedAssetService`.
+- Asset normalization occurs before execution payload build and emits:
+  - `markets.asset.normalization`

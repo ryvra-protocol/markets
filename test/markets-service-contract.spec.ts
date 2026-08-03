@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExecutionAdapter } from "../src/adapters/execution-adapter.js";
+import type { AssetRegistryClient } from "../src/adapters/asset-registry-client.js";
 import type { LedgerClient } from "../src/adapters/ledger-client.js";
 import type { PolicyClient, PolicyDecision } from "../src/adapters/policy-client.js";
 import { ensurePolicyReasonCodes } from "../src/adapters/policy-client.js";
@@ -9,9 +10,11 @@ import type { ExecutionBuildInput, ExecutionBuildResult } from "../src/service/e
 import {
   MarketsService,
   PolicyDeniedError,
+  type AssetNormalizationObservedEvent,
   type SettlementSubmissionObservedEvent
 } from "../src/service/markets-service.js";
 import { QuoteValidator } from "../src/service/quote-validator.js";
+import { UnifiedAssetService } from "../src/service/unified-asset-service.js";
 import type { MarketIntent } from "../src/types/market-intent.js";
 
 const intent: MarketIntent = {
@@ -475,6 +478,144 @@ describe("policy + idempotency contract alignment", () => {
       blockNumber: 44,
       status: "submitted"
     });
+  });
+
+  it("normalizes assets before execution build with correlation-safe observability", async () => {
+    const observedNormalization: AssetNormalizationObservedEvent[] = [];
+    const policy: PolicyClient = {
+      pre_trade_check_with_context: async (input) => {
+        expect(input.domain_context.unified_assets).toMatchObject({
+          base_asset: { canonical_id: "asset:btc", symbol: "BTC" },
+          quote_asset: { canonical_id: "asset:usd", symbol: "USD" }
+        });
+        return {
+          decision: "ALLOW",
+          policy_version: "policy-risk@2.0.0",
+          explanation: "Allowed"
+        };
+      },
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => ({
+        route_id: "route-1",
+        status: "accepted",
+        reference_id: "ref-1",
+        correlation_id: "corr-1"
+      }),
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const registry: AssetRegistryClient = {
+      resolve_asset: async ({ asset, chain_id }) => ({
+        canonical_id: `asset:${asset.toLowerCase()}`,
+        symbol: asset.toUpperCase(),
+        decimals: asset === "USD" ? 2 : 8,
+        chain_id
+      })
+    };
+    const txBuildInputs: ExecutionBuildInput[] = [];
+    const txBuilder = {
+      build: async (input: ExecutionBuildInput): Promise<ExecutionBuildResult> => {
+        txBuildInputs.push(input);
+        return {
+          payloads: [
+            {
+              chainId: input.chainId,
+              target: input.target,
+              calldata: input.calldata,
+              value: input.value,
+              recipient: input.recipient,
+              minOut: input.minOut,
+              maxIn: input.maxIn,
+              deadline: input.deadline,
+              nonce: input.nonce,
+              idempotencyKey: input.idempotencyKey ?? "idem"
+            }
+          ],
+          metadata: {
+            chainId: input.chainId,
+            target: input.target,
+            calldata: input.calldata,
+            value: input.value,
+            minOut: input.minOut,
+            maxIn: input.maxIn,
+            deadline: input.deadline,
+            recipient: input.recipient,
+            nonce: input.nonce,
+            idempotencyKey: input.idempotencyKey ?? "idem",
+            fingerprintHash: "hash"
+          }
+        };
+      }
+    };
+
+    const service = new MarketsService(
+      policy,
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      txBuilder,
+      undefined,
+      new UnifiedAssetService(registry),
+      (event) => {
+        observedNormalization.push(event);
+      }
+    );
+
+    await service.submitIntentV2({
+      ...intent,
+      created_at: "2026-01-01T00:00:00.000Z",
+      meta: {
+        execution_chain_id: "1",
+        execution_target: "0x1111111111111111111111111111111111111111",
+        execution_calldata: "0xabcdef",
+        execution_recipient: "0x2222222222222222222222222222222222222222",
+        execution_amount_type: "exactIn",
+        execution_amount_in: "1000000",
+        execution_amount_out: "2000000",
+        execution_min_out: "1900000",
+        execution_input_token_address: "0x3333333333333333333333333333333333333333",
+        execution_output_token_address: "0x4444444444444444444444444444444444444444",
+        execution_input_token_decimals: "2",
+        execution_output_token_decimals: "8",
+        execution_quote_amount_in: "1000000",
+        execution_quote_amount_out: "2000000",
+        execution_quote_input_token_decimals: "2",
+        execution_quote_output_token_decimals: "8"
+      }
+    });
+
+    expect(observedNormalization).toHaveLength(1);
+    expect(observedNormalization[0]).toMatchObject({
+      event_type: "markets.asset.normalization",
+      correlation_id: "corr-1",
+      reference_id: "ref-1",
+      chain_id: 1,
+      assets: {
+        base_asset_canonical_id: "asset:btc",
+        quote_asset_canonical_id: "asset:usd"
+      }
+    });
+    expect(txBuildInputs).toHaveLength(1);
+    expect(txBuildInputs[0].inputToken.symbol).toBe("USD");
+    expect(txBuildInputs[0].outputToken.symbol).toBe("BTC");
   });
 });
 
