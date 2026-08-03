@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExecutionAdapter } from "../src/adapters/execution-adapter.js";
+import type { AccountsRuntimeClient } from "../src/adapters/accounts-runtime-client.js";
 import type { AssetRegistryClient } from "../src/adapters/asset-registry-client.js";
 import type { LedgerClient } from "../src/adapters/ledger-client.js";
 import type { PolicyClient, PolicyDecision } from "../src/adapters/policy-client.js";
@@ -15,6 +16,7 @@ import {
 } from "../src/service/markets-service.js";
 import { QuoteValidator } from "../src/service/quote-validator.js";
 import { UnifiedAssetService } from "../src/service/unified-asset-service.js";
+import { Aa4337UserOpService, type Aa4337ExecutionInput } from "../src/service/aa4337-userop-service.js";
 import type { MarketIntent } from "../src/types/market-intent.js";
 
 const intent: MarketIntent = {
@@ -616,6 +618,212 @@ describe("policy + idempotency contract alignment", () => {
     expect(txBuildInputs).toHaveLength(1);
     expect(txBuildInputs[0].inputToken.symbol).toBe("USD");
     expect(txBuildInputs[0].outputToken.symbol).toBe("BTC");
+  });
+
+  it("invokes aa4337 userop path only on ALLOW with normalized assets", async () => {
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({
+        decision: "ALLOW",
+        policy_version: "policy-risk@2.0.0",
+        explanation: "Allowed"
+      }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => ({
+        route_id: "route-1",
+        status: "accepted",
+        reference_id: "ref-1",
+        correlation_id: "corr-1"
+      }),
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const registry: AssetRegistryClient = {
+      resolve_asset: async ({ asset, chain_id }) => ({
+        canonical_id: `asset:${asset.toLowerCase()}`,
+        symbol: asset.toUpperCase(),
+        decimals: asset === "USD" ? 2 : 8,
+        chain_id
+      })
+    };
+
+    const aaInputs: Aa4337ExecutionInput[] = [];
+    const aaRuntime: AccountsRuntimeClient = {
+      build: async (input) => {
+        aaInputs.push({
+          correlation_id: input.correlation_id,
+          reference_id: input.reference_id,
+          idempotency_key: input.idempotency_key,
+          side: input.trade.side,
+          size: Number(input.trade.size),
+          chain_id: input.chain_id,
+          account_id: input.account_id,
+          amount_in: input.trade.amount_in,
+          amount_out: input.trade.amount_out,
+          execution_target: input.execution.target,
+          execution_calldata: input.execution.calldata,
+          execution_value: input.execution.value,
+          execution_recipient: input.execution.recipient,
+          deadline: input.execution.deadline,
+          nonce: input.execution.nonce,
+          input_token_decimals: input.execution.input_token.decimals,
+          output_token_decimals: input.execution.output_token.decimals,
+          quote_input_token_decimals: input.execution.input_token.decimals,
+          quote_output_token_decimals: input.execution.output_token.decimals,
+          assets: {
+            base_asset: {
+              canonical_id: input.trade.base_asset.canonical_id,
+              symbol: input.trade.base_asset.symbol,
+              decimals: input.trade.base_asset.decimals,
+              chain_id: input.chain_id,
+              address: input.trade.base_asset.address
+            },
+            quote_asset: {
+              canonical_id: input.trade.quote_asset.canonical_id,
+              symbol: input.trade.quote_asset.symbol,
+              decimals: input.trade.quote_asset.decimals,
+              chain_id: input.chain_id,
+              address: input.trade.quote_asset.address
+            }
+          }
+        });
+        return { user_operation: {} };
+      },
+      simulate: async () => ({ success: true }),
+      send: async () => ({ user_operation_hash: "0xaaa" }),
+      getReceipt: async () => ({ status: "included", transaction_hash: "0xbbb", block_number: 1 })
+    };
+
+    const service = new MarketsService(
+      policy,
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      new UnifiedAssetService(registry),
+      undefined,
+      new Aa4337UserOpService(aaRuntime)
+    );
+
+    await service.submitIntentV2({
+      ...intent,
+      created_at: "2026-01-01T00:00:00.000Z",
+      meta: {
+        execution_chain_id: "1",
+        execution_target: "0x1111111111111111111111111111111111111111",
+        execution_calldata: "0xabcdef",
+        execution_recipient: "0x2222222222222222222222222222222222222222",
+        execution_value: "0",
+        execution_amount_in: "1000000",
+        execution_amount_out: "2000000",
+        execution_input_token_decimals: "2",
+        execution_output_token_decimals: "8",
+        execution_quote_input_token_decimals: "2",
+        execution_quote_output_token_decimals: "8"
+      }
+    });
+
+    expect(aaInputs).toHaveLength(1);
+    expect(aaInputs[0].assets.base_asset.canonical_id).toBe("asset:btc");
+    expect(aaInputs[0].assets.quote_asset.canonical_id).toBe("asset:usd");
+  });
+
+  it("does not execute aa4337 userop path for DENY/REVIEW", async () => {
+    let buildCount = 0;
+    const aaRuntime: AccountsRuntimeClient = {
+      build: async () => {
+        buildCount += 1;
+        return { user_operation: {} };
+      },
+      simulate: async () => ({ success: true }),
+      send: async () => ({ user_operation_hash: "0xaaa" }),
+      getReceipt: async () => ({ status: "included" })
+    };
+    const aaService = new Aa4337UserOpService(aaRuntime);
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => {
+        throw new Error("should not fetch quote");
+      },
+      submit: async () => {
+        throw new Error("should not submit route");
+      },
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const registry: AssetRegistryClient = {
+      resolve_asset: async ({ asset, chain_id }) => ({
+        canonical_id: `asset:${asset.toLowerCase()}`,
+        symbol: asset.toUpperCase(),
+        decimals: asset === "USD" ? 2 : 8,
+        chain_id
+      })
+    };
+
+    const denyService = new MarketsService(
+      {
+        pre_trade_check: async () => ({
+          decision: "DENY",
+          policy_version: "policy-risk@2.0.0",
+          explanation: "Denied",
+          reason_codes: ["policy_denied"]
+        }),
+        pre_settlement_check: async () => ({ decision: "ALLOW" })
+      },
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      new UnifiedAssetService(registry),
+      undefined,
+      aaService
+    );
+    await expect(denyService.submitIntentV2(intent)).rejects.toBeInstanceOf(PolicyDeniedError);
+
+    const reviewService = new MarketsService(
+      {
+        pre_trade_check: async () => ({
+          decision: "REVIEW",
+          policy_version: "policy-risk@2.0.0",
+          explanation: "Review",
+          reason_codes: ["policy_review_required"]
+        }),
+        pre_settlement_check: async () => ({ decision: "ALLOW" })
+      },
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      new UnifiedAssetService(registry),
+      undefined,
+      aaService
+    );
+    const review = await reviewService.submitIntentV2(intent);
+    expect(review.accepted).toBe(false);
+    expect(buildCount).toBe(0);
   });
 });
 

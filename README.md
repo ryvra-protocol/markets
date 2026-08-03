@@ -93,3 +93,17 @@ Ops readiness docs:
 - Pre-trade flow can resolve canonical assets through `AssetRegistryClient` and `UnifiedAssetService`.
 - Asset normalization occurs before execution payload build and emits:
   - `markets.asset.normalization`
+
+## ERC-4337 execution integration (PR8)
+
+- ALLOW-path account abstraction execution is integrated via accounts runtime surfaces:
+  - `build`
+  - `simulate`
+  - `send`
+  - `getReceipt`
+- UserOperation request build is derived from PR7 normalized unified assets.
+- DENY/REVIEW outcomes remain non-executable and never invoke AA4337 userop submission.
+- Sanitized lifecycle observability is emitted:
+  - `markets.aa4337.userop.submitted`
+  - `markets.aa4337.userop.included`
+  - `markets.aa4337.userop.failed`

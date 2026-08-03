@@ -9,6 +9,7 @@ import type { ExecutionRouter } from "../routing/execution-router.js";
 import type { MarketIntent } from "../types/market-intent.js";
 import type { Quote } from "../types/quote.js";
 import type { QuoteValidator } from "./quote-validator.js";
+import type { Aa4337UserOpService } from "./aa4337-userop-service.js";
 import {
   QuoteConstraintViolationError,
   type ExecutionBuildInput,
@@ -112,7 +113,8 @@ export class MarketsService {
     private readonly executionTxBuilder?: ExecutionTxBuildClient,
     private readonly settlementSubmissionObserver?: SettlementSubmissionObserver,
     private readonly unifiedAssetService?: UnifiedAssetService,
-    private readonly assetNormalizationObserver?: AssetNormalizationObserver
+    private readonly assetNormalizationObserver?: AssetNormalizationObserver,
+    private readonly aa4337UserOpService?: Aa4337UserOpService
   ) {}
 
   async submitIntent(intent: MarketIntent): Promise<SubmitIntentResult> {
@@ -195,6 +197,14 @@ export class MarketsService {
     if (this.executionTxBuilder) {
       await this.executionTxBuilder.build(
         this.toExecutionBuildInput(intent, quote, policyDecision, unifiedAssetContext?.assets)
+      );
+    }
+    if (this.aa4337UserOpService && !unifiedAssetContext?.assets) {
+      throw new QuoteConstraintViolationError("aa4337 execution requires normalized unified assets");
+    }
+    if (this.aa4337UserOpService && unifiedAssetContext?.assets) {
+      await this.aa4337UserOpService.execute(
+        this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, executionChainId)
       );
     }
 
@@ -392,6 +402,56 @@ export class MarketsService {
         has_execution_plan: Boolean(input.domain_context.execution_plan)
       }
     });
+  }
+
+  private toAa4337ExecutionInput(
+    intent: MarketIntent,
+    assets: UnifiedAssetPair,
+    executionChainId: number
+  ): Parameters<Aa4337UserOpService["execute"]>[0] {
+    const metadata = intent.meta ?? {};
+    const required = (key: string): string => {
+      const value = metadata[key]?.trim();
+      if (!value) {
+        throw new QuoteConstraintViolationError(`missing required execution metadata: ${key}`);
+      }
+      return value;
+    };
+    const requiredInteger = (key: string): number => {
+      const value = Number(required(key));
+      if (!Number.isInteger(value)) {
+        throw new QuoteConstraintViolationError(`invalid integer execution metadata: ${key}`);
+      }
+      return value;
+    };
+    const createdAt = intent.created_at ? new Date(intent.created_at) : new Date();
+    const createdAtMs = Number.isNaN(createdAt.getTime()) ? Date.now() : createdAt.getTime();
+
+    return {
+      correlation_id: intent.correlation_id,
+      reference_id: intent.reference_id,
+      idempotency_key: intent.idempotency_key,
+      side: intent.side,
+      size: intent.size,
+      chain_id: executionChainId,
+      account_id: intent.account_id,
+      paymaster: metadata.aa4337_paymaster,
+      paymaster_chain_id: metadata.aa4337_paymaster_chain_id ? requiredInteger("aa4337_paymaster_chain_id") : undefined,
+      paymaster_account_id: metadata.aa4337_paymaster_account_id,
+      amount_in: required("execution_amount_in"),
+      amount_out: required("execution_amount_out"),
+      execution_target: required("execution_target"),
+      execution_calldata: required("execution_calldata"),
+      execution_value: (metadata.execution_value ?? "0").trim(),
+      execution_recipient: required("execution_recipient"),
+      deadline: new Date(createdAtMs + intent.ttl_ms).toISOString(),
+      nonce: metadata.execution_nonce?.trim(),
+      input_token_decimals: requiredInteger("execution_input_token_decimals"),
+      output_token_decimals: requiredInteger("execution_output_token_decimals"),
+      quote_input_token_decimals: requiredInteger("execution_quote_input_token_decimals"),
+      quote_output_token_decimals: requiredInteger("execution_quote_output_token_decimals"),
+      assets
+    };
   }
 
   private resolveExecutionChainId(intent: MarketIntent): number {
