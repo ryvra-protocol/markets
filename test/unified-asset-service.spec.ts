@@ -83,5 +83,35 @@ describe("UnifiedAssetService (golden normalization)", () => {
         }
       }
     });
+
+  });
+
+  it("deduplicates normalized aliases", async () => {
+    const registry = new MockAssetRegistryClient({
+      BTC: {
+        canonical_id: "asset:btc",
+        symbol: "btc",
+        decimals: 8,
+        chain_id: 1,
+        aliases: ["btc", " BTC ", "xbt", " XBT ", " "]
+      },
+      USD: {
+        canonical_id: "asset:usd",
+        symbol: "usd",
+        decimals: 2,
+        chain_id: 1,
+        aliases: ["usd"]
+      }
+    });
+
+    const service = new UnifiedAssetService(registry);
+    const normalized = await service.normalize_pre_trade_assets({
+      base_asset: "BTC",
+      quote_asset: "USD",
+      chain_id: 1,
+      correlation_id: "corr-2"
+    });
+
+    expect(normalized.assets.base_asset.aliases).toEqual(["BTC", "XBT"]);
   });
 });
