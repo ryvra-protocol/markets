@@ -825,6 +825,149 @@ describe("policy + idempotency contract alignment", () => {
     expect(review.accepted).toBe(false);
     expect(buildCount).toBe(0);
   });
+
+  it("fails closed when policy dependency times out and never builds/submits", async () => {
+    let routeSubmitCount = 0;
+    let buildCount = 0;
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => {
+        throw new Error("should not fetch quote");
+      },
+      submit: async () => {
+        routeSubmitCount += 1;
+        return {
+          route_id: "route-1",
+          status: "accepted",
+          reference_id: "ref-1",
+          correlation_id: "corr-1"
+        };
+      },
+      cancel: async () => {}
+    };
+    const txBuilder = {
+      build: async (): Promise<ExecutionBuildResult> => {
+        buildCount += 1;
+        throw new Error("should not be invoked");
+      }
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const service = new MarketsService(
+      {
+        pre_trade_check: async () => {
+          throw new Error("policy timed out");
+        },
+        pre_settlement_check: async () => ({ decision: "ALLOW" })
+      },
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      txBuilder
+    );
+
+    const result = await service.submitIntentV2(intent);
+    expect(result).toEqual({
+      accepted: false,
+      reason_codes: ["policy_dependency_timeout"]
+    });
+    expect(buildCount).toBe(0);
+    expect(routeSubmitCount).toBe(0);
+  });
+
+  it("records allow/blocked/failure metrics and emits sanitized execution events", async () => {
+    const counters: Array<{ name: string; labels?: Record<string, string> }> = [];
+    const events: Array<{ event_type: string; reason_code?: string; reason_codes?: readonly string[] }> = [];
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({
+        decision: "ALLOW",
+        policy_version: "policy-risk@2.0.0",
+        explanation: "Allowed"
+      }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => {
+        throw new Error("adapter timeout");
+      },
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const service = new MarketsService(
+      policy,
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        events.push(event);
+      },
+      {
+        incrementCounter: (name, labels) => {
+          counters.push({ name, labels });
+        }
+      }
+    );
+
+    await expect(service.submitIntentV2(intent)).rejects.toThrow("adapter timeout");
+    expect(counters.some((entry) => entry.name === "markets_allow_path_total")).toBe(true);
+    expect(counters.some((entry) => entry.name === "markets_execution_failure_total")).toBe(true);
+    expect(events.some((entry) => entry.event_type === "markets.execution.allowed")).toBe(true);
+    expect(events.some((entry) => entry.event_type === "markets.execution.failed")).toBe(true);
+
+    const denied = new MarketsService(
+      {
+        pre_trade_check: async () => ({
+          decision: "REVIEW",
+          policy_version: "policy-risk@2.0.0",
+          explanation: "Review",
+          reason_codes: ["policy_review_required"]
+        }),
+        pre_settlement_check: async () => ({ decision: "ALLOW" })
+      },
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        events.push(event);
+      },
+      {
+        incrementCounter: (name, labels) => {
+          counters.push({ name, labels });
+        }
+      }
+    );
+    await denied.submitIntentV2(intent);
+    expect(counters.some((entry) => entry.name === "markets_execution_blocked_total")).toBe(true);
+    expect(events.some((entry) => entry.event_type === "markets.execution.blocked")).toBe(true);
+  });
 });
 
 describe("ensurePolicyReasonCodes", () => {

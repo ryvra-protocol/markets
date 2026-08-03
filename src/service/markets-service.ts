@@ -8,15 +8,14 @@ import type { TradeIntent } from "../domain/trade-intent.js";
 import type { ExecutionRouter } from "../routing/execution-router.js";
 import type { MarketIntent } from "../types/market-intent.js";
 import type { Quote } from "../types/quote.js";
-import type { QuoteValidator } from "./quote-validator.js";
 import type { Aa4337UserOpService } from "./aa4337-userop-service.js";
+import type { QuoteValidator } from "./quote-validator.js";
 import {
   QuoteConstraintViolationError,
   type ExecutionBuildInput,
   type ExecutionTxBuildClient
 } from "./execution-tx-builder.js";
-import type { UnifiedAssetPair } from "./unified-asset-service.js";
-import type { UnifiedAssetService } from "./unified-asset-service.js";
+import { UnifiedAssetNormalizationError, type UnifiedAssetPair, type UnifiedAssetService } from "./unified-asset-service.js";
 
 export type SubmitIntentResult =
   | { accepted: true; route_id: string; reference_id: string; correlation_id: string }
@@ -100,6 +99,65 @@ export interface AssetNormalizationObservedEvent {
 
 export type AssetNormalizationObserver = (event: AssetNormalizationObservedEvent) => void | Promise<void>;
 
+export interface MarketsExecutionObservedEvent {
+  event_type: "markets.execution.allowed" | "markets.execution.blocked" | "markets.execution.failed";
+  timestamp: string;
+  correlation_id: string;
+  reference_id: string;
+  idempotency_key: string;
+  reason_codes?: readonly string[];
+  reason_code?: string;
+}
+
+export type MarketsExecutionObserver = (event: MarketsExecutionObservedEvent) => void | Promise<void>;
+
+export interface MarketsExecutionMetricsRecorder {
+  incrementCounter(name: string, labels?: Record<string, string>): void;
+}
+
+interface NormalizedExecutionMetadata {
+  chain_id: number;
+  target: string;
+  calldata: string;
+  value: string;
+  recipient: string;
+  amount_type: "exactIn" | "exactOut";
+  amount_in: string;
+  amount_out: string;
+  min_out?: string;
+  max_in?: string;
+  nonce?: string;
+  input_token_address: string;
+  output_token_address: string;
+  input_token_decimals: number;
+  output_token_decimals: number;
+  quote_amount_in: string;
+  quote_amount_out: string;
+  quote_input_token_decimals: number;
+  quote_output_token_decimals: number;
+  paymaster?: string;
+  paymaster_chain_id?: number;
+  paymaster_account_id?: string;
+  deadline: string;
+}
+
+function normalizeAddress(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = `${error.name}:${error.message}`.toLowerCase();
+  return (
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("etimedout") ||
+    message.includes("abort")
+  );
+}
+
 export class MarketsService {
   private readonly idempotentResults = new Map<string, SubmitIntentV2Result>();
   private readonly idempotentErrors = new Map<string, PolicyDeniedError>();
@@ -114,7 +172,9 @@ export class MarketsService {
     private readonly settlementSubmissionObserver?: SettlementSubmissionObserver,
     private readonly unifiedAssetService?: UnifiedAssetService,
     private readonly assetNormalizationObserver?: AssetNormalizationObserver,
-    private readonly aa4337UserOpService?: Aa4337UserOpService
+    private readonly aa4337UserOpService?: Aa4337UserOpService,
+    private readonly executionObserver?: MarketsExecutionObserver,
+    private readonly metrics?: MarketsExecutionMetricsRecorder
   ) {}
 
   async submitIntent(intent: MarketIntent): Promise<SubmitIntentResult> {
@@ -153,17 +213,50 @@ export class MarketsService {
     }
 
     const executionChainId = this.resolveExecutionChainId(intent);
-    const unifiedAssetContext = await this.resolveUnifiedAssetContext(intent, executionChainId);
+
+    let unifiedAssetContext: Awaited<ReturnType<UnifiedAssetService["normalize_pre_trade_assets"]>> | undefined;
+    try {
+      unifiedAssetContext = await this.resolveUnifiedAssetContext(intent, executionChainId);
+    } catch (error) {
+      const reason =
+        error instanceof UnifiedAssetNormalizationError
+          ? error.reason_code
+          : isTimeoutError(error)
+            ? "unified_asset_dependency_timeout"
+            : "unified_asset_dependency_ambiguous";
+      return this.blockExecution(intent, idempotencyCacheKey, [reason]);
+    }
+
     const policyInput = this.toPreTradePolicyInput(
       intent,
       unifiedAssetContext?.assets,
       unifiedAssetContext?.exposure,
       executionChainId
     );
-    const rawPolicyDecision = this.policy.pre_trade_check_with_context
-      ? await this.policy.pre_trade_check_with_context(policyInput)
-      : await this.policy.pre_trade_check(intent);
-    const policyDecision = normalizePolicyDecision(rawPolicyDecision);
+
+    let policyDecision:
+      | {
+          decision: "ALLOW";
+          policy_version: string;
+          reason_codes?: readonly `policy_${string}`[];
+          explanation: string;
+        }
+      | {
+          decision: "DENY" | "REVIEW";
+          policy_version: string;
+          reason_codes?: readonly string[];
+          explanation: string;
+        };
+    try {
+      const rawPolicyDecision = this.policy.pre_trade_check_with_context
+        ? await this.policy.pre_trade_check_with_context(policyInput)
+        : await this.policy.pre_trade_check(intent);
+      policyDecision = normalizePolicyDecision(rawPolicyDecision);
+    } catch (error) {
+      const reasonCode = isTimeoutError(error) ? "policy_dependency_timeout" : "policy_dependency_ambiguous";
+      return this.blockExecution(intent, idempotencyCacheKey, [reasonCode]);
+    }
+
     await this.observePolicyDecision(intent, policyInput, policyDecision);
 
     if (policyDecision.decision === "DENY") {
@@ -172,6 +265,7 @@ export class MarketsService {
         ensurePolicyReasonCodes(policyDecision.reason_codes),
         policyDecision.explanation
       );
+      await this.observeExecutionBlocked(intent, deniedError.reason_codes);
       this.idempotentErrors.set(idempotencyCacheKey, deniedError);
       throw deniedError;
     }
@@ -183,57 +277,131 @@ export class MarketsService {
         reason_codes: ensurePolicyReasonCodes(policyDecision.reason_codes, "policy_review_required"),
         explanation: policyDecision.explanation
       };
+      await this.observeExecutionBlocked(intent, reviewResult.reason_codes);
       this.idempotentResults.set(idempotencyCacheKey, reviewResult);
       return reviewResult;
     }
 
-    const quote = await this.router.fetch_quote(intent);
-    if (!this.quoteValidator.isValid(intent, quote)) {
-      const invalidQuoteResult = { accepted: false as const, reason_codes: ["quote_invalid"] as [string] };
-      this.idempotentResults.set(idempotencyCacheKey, invalidQuoteResult);
-      return invalidQuoteResult;
-    }
-    await this.observeAssetNormalization(intent, executionChainId, unifiedAssetContext?.assets);
-    if (this.executionTxBuilder) {
-      await this.executionTxBuilder.build(
-        this.toExecutionBuildInput(intent, quote, policyDecision, unifiedAssetContext?.assets)
-      );
-    }
-    if (this.aa4337UserOpService && !unifiedAssetContext?.assets) {
-      throw new QuoteConstraintViolationError("aa4337 execution requires normalized unified assets");
-    }
-    if (this.aa4337UserOpService && unifiedAssetContext?.assets) {
-      await this.aa4337UserOpService.execute(
-        this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, executionChainId)
-      );
-    }
+    await this.observeExecutionAllowed(intent);
 
-    const route = await this.router.route(intent, quote);
-    if (route.status !== "accepted") {
-      const routeRejectedResult = {
-        accepted: false as const,
-        reason_codes: ensureRouteReasonCodes(route.reason_codes)
+    try {
+      if (executionChainId <= 0 && (this.executionTxBuilder || this.aa4337UserOpService || this.unifiedAssetService)) {
+        return this.blockExecution(intent, idempotencyCacheKey, ["execution_chain_invalid"]);
+      }
+      const quote = await this.router.fetch_quote(intent);
+      if (!this.quoteValidator.isValid(intent, quote)) {
+        return this.blockExecution(intent, idempotencyCacheKey, ["quote_invalid"]);
+      }
+
+      await this.observeAssetNormalization(intent, executionChainId, unifiedAssetContext?.assets);
+      const normalizedExecution = this.toNormalizedExecutionMetadata(intent, executionChainId, unifiedAssetContext?.assets);
+
+      if (this.executionTxBuilder) {
+        await this.executionTxBuilder.build(
+          this.toExecutionBuildInput(intent, quote, policyDecision, normalizedExecution, unifiedAssetContext?.assets)
+        );
+      }
+      if (this.aa4337UserOpService && !unifiedAssetContext?.assets) {
+        throw new QuoteConstraintViolationError("aa4337 execution requires normalized unified assets");
+      }
+      if (this.aa4337UserOpService && unifiedAssetContext?.assets) {
+        await this.aa4337UserOpService.execute(
+          this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, normalizedExecution)
+        );
+      }
+
+      const route = await this.router.route(intent, quote);
+      if (route.status !== "accepted") {
+        return this.blockExecution(intent, idempotencyCacheKey, ensureRouteReasonCodes(route.reason_codes));
+      }
+      if (route.correlation_id !== intent.correlation_id) {
+        throw new QuoteConstraintViolationError("route correlation_id must match intent correlation_id");
+      }
+      if (route.reference_id !== intent.reference_id) {
+        throw new QuoteConstraintViolationError("route reference_id must match intent reference_id");
+      }
+
+      const settlement = await this.ledger.settle({
+        order_id: intent.reference_id,
+        route_id: route.route_id,
+        reference_id: route.reference_id,
+        correlation_id: route.correlation_id
+      });
+      await this.observeSettlementSubmission(intent, route.route_id, route.correlation_id, settlement);
+
+      const acceptedResult = {
+        accepted: true as const,
+        route_id: route.route_id,
+        reference_id: route.reference_id,
+        correlation_id: route.correlation_id
       };
-      this.idempotentResults.set(idempotencyCacheKey, routeRejectedResult);
-      return routeRejectedResult;
+      this.idempotentResults.set(idempotencyCacheKey, acceptedResult);
+      return acceptedResult;
+    } catch (error) {
+      await this.observeExecutionFailure(intent, this.toExecutionFailureReasonCode(error));
+      throw error;
     }
+  }
 
-    const settlement = await this.ledger.settle({
-      order_id: intent.reference_id,
-      route_id: route.route_id,
-      reference_id: route.reference_id,
-      correlation_id: route.correlation_id
-    });
-    await this.observeSettlementSubmission(intent, route.route_id, route.correlation_id, settlement);
-
-    const acceptedResult = {
-      accepted: true as const,
-      route_id: route.route_id,
-      reference_id: route.reference_id,
-      correlation_id: route.correlation_id
+  private async blockExecution(
+    intent: MarketIntent,
+    idempotencyCacheKey: string,
+    reason_codes: [string, ...string[]]
+  ): Promise<SubmitIntentV2Result> {
+    const blocked = {
+      accepted: false as const,
+      reason_codes
     };
-    this.idempotentResults.set(idempotencyCacheKey, acceptedResult);
-    return acceptedResult;
+    this.idempotentResults.set(idempotencyCacheKey, blocked);
+    await this.observeExecutionBlocked(intent, reason_codes);
+    return blocked;
+  }
+
+  private toExecutionFailureReasonCode(error: unknown): string {
+    if (error instanceof QuoteConstraintViolationError) {
+      return "execution_guardrail_violation";
+    }
+    if (error instanceof Error && isTimeoutError(error)) {
+      return "execution_dependency_timeout";
+    }
+    return "execution_dependency_failed";
+  }
+
+  private async observeExecutionAllowed(intent: MarketIntent): Promise<void> {
+    await this.executionObserver?.({
+      event_type: "markets.execution.allowed",
+      timestamp: new Date().toISOString(),
+      correlation_id: intent.correlation_id,
+      reference_id: intent.reference_id,
+      idempotency_key: intent.idempotency_key
+    });
+    this.metrics?.incrementCounter("markets_allow_path_total", { chain_id: intent.meta?.execution_chain_id?.trim() || "unknown" });
+  }
+
+  private async observeExecutionBlocked(intent: MarketIntent, reason_codes: readonly string[]): Promise<void> {
+    await this.executionObserver?.({
+      event_type: "markets.execution.blocked",
+      timestamp: new Date().toISOString(),
+      correlation_id: intent.correlation_id,
+      reference_id: intent.reference_id,
+      idempotency_key: intent.idempotency_key,
+      reason_codes
+    });
+    this.metrics?.incrementCounter("markets_execution_blocked_total", {
+      reason_code: reason_codes[0] ?? "unknown"
+    });
+  }
+
+  private async observeExecutionFailure(intent: MarketIntent, reason_code: string): Promise<void> {
+    await this.executionObserver?.({
+      event_type: "markets.execution.failed",
+      timestamp: new Date().toISOString(),
+      correlation_id: intent.correlation_id,
+      reference_id: intent.reference_id,
+      idempotency_key: intent.idempotency_key,
+      reason_code
+    });
+    this.metrics?.incrementCounter("markets_execution_failure_total", { reason_code });
   }
 
   private async observeSettlementSubmission(
@@ -313,59 +481,41 @@ export class MarketsService {
       reason_codes?: readonly `policy_${string}`[];
       explanation: string;
     },
+    normalizedExecution: NormalizedExecutionMetadata,
     assets?: UnifiedAssetPair
   ): ExecutionBuildInput {
-    const metadata = intent.meta ?? {};
-    const required = (key: string): string => {
-      const value = metadata[key]?.trim();
-      if (!value) {
-        throw new QuoteConstraintViolationError(`missing required execution metadata: ${key}`);
-      }
-      return value;
-    };
-    const requiredInteger = (key: string): number => {
-      const value = Number(required(key));
-      if (!Number.isInteger(value)) {
-        throw new QuoteConstraintViolationError(`invalid integer execution metadata: ${key}`);
-      }
-      return value;
-    };
-
-    const createdAt = intent.created_at ? new Date(intent.created_at) : new Date();
-    const createdAtMs = Number.isNaN(createdAt.getTime()) ? Date.now() : createdAt.getTime();
-
     return {
       correlationId: intent.correlation_id,
       idempotencyKey: intent.idempotency_key,
       policyDecision,
-      chainId: requiredInteger("execution_chain_id"),
-      target: required("execution_target"),
-      calldata: required("execution_calldata"),
-      value: (metadata.execution_value ?? "0").trim(),
-      recipient: required("execution_recipient"),
+      chainId: normalizedExecution.chain_id,
+      target: normalizedExecution.target,
+      calldata: normalizedExecution.calldata,
+      value: normalizedExecution.value,
+      recipient: normalizedExecution.recipient,
       slippageBps: intent.max_slippage_bps,
-      deadline: new Date(createdAtMs + intent.ttl_ms).toISOString(),
-      amountType: (metadata.execution_amount_type === "exactOut" ? "exactOut" : "exactIn") as "exactIn" | "exactOut",
-      amountIn: required("execution_amount_in"),
-      amountOut: required("execution_amount_out"),
-      minOut: metadata.execution_min_out?.trim(),
-      maxIn: metadata.execution_max_in?.trim(),
-      nonce: metadata.execution_nonce?.trim(),
+      deadline: normalizedExecution.deadline,
+      amountType: normalizedExecution.amount_type,
+      amountIn: normalizedExecution.amount_in,
+      amountOut: normalizedExecution.amount_out,
+      minOut: normalizedExecution.min_out,
+      maxIn: normalizedExecution.max_in,
+      nonce: normalizedExecution.nonce,
       inputToken: {
         symbol: intent.side === "buy" ? (assets?.quote_asset.symbol ?? quote.quote_asset) : (assets?.base_asset.symbol ?? quote.base_asset),
-        address: required("execution_input_token_address"),
-        decimals: requiredInteger("execution_input_token_decimals")
+        address: normalizedExecution.input_token_address,
+        decimals: normalizedExecution.input_token_decimals
       },
       outputToken: {
         symbol: intent.side === "buy" ? (assets?.base_asset.symbol ?? quote.base_asset) : (assets?.quote_asset.symbol ?? quote.quote_asset),
-        address: required("execution_output_token_address"),
-        decimals: requiredInteger("execution_output_token_decimals")
+        address: normalizedExecution.output_token_address,
+        decimals: normalizedExecution.output_token_decimals
       },
       quote: {
-        amountIn: required("execution_quote_amount_in"),
-        amountOut: required("execution_quote_amount_out"),
-        inputTokenDecimals: requiredInteger("execution_quote_input_token_decimals"),
-        outputTokenDecimals: requiredInteger("execution_quote_output_token_decimals")
+        amountIn: normalizedExecution.quote_amount_in,
+        amountOut: normalizedExecution.quote_amount_out,
+        inputTokenDecimals: normalizedExecution.quote_input_token_decimals,
+        outputTokenDecimals: normalizedExecution.quote_output_token_decimals
       }
     };
   }
@@ -407,8 +557,70 @@ export class MarketsService {
   private toAa4337ExecutionInput(
     intent: MarketIntent,
     assets: UnifiedAssetPair,
-    executionChainId: number
+    normalizedExecution: NormalizedExecutionMetadata
   ): Parameters<Aa4337UserOpService["execute"]>[0] {
+    return {
+      correlation_id: intent.correlation_id,
+      reference_id: intent.reference_id,
+      idempotency_key: intent.idempotency_key,
+      side: intent.side,
+      size: intent.size,
+      chain_id: normalizedExecution.chain_id,
+      account_id: intent.account_id,
+      paymaster: normalizedExecution.paymaster,
+      paymaster_chain_id: normalizedExecution.paymaster_chain_id,
+      paymaster_account_id: normalizedExecution.paymaster_account_id,
+      amount_in: normalizedExecution.amount_in,
+      amount_out: normalizedExecution.amount_out,
+      execution_target: normalizedExecution.target,
+      execution_calldata: normalizedExecution.calldata,
+      execution_value: normalizedExecution.value,
+      execution_recipient: normalizedExecution.recipient,
+      deadline: normalizedExecution.deadline,
+      nonce: normalizedExecution.nonce,
+      input_token_decimals: normalizedExecution.input_token_decimals,
+      output_token_decimals: normalizedExecution.output_token_decimals,
+      quote_input_token_decimals: normalizedExecution.quote_input_token_decimals,
+      quote_output_token_decimals: normalizedExecution.quote_output_token_decimals,
+      assets
+    };
+  }
+
+  private resolveExecutionChainId(intent: MarketIntent): number {
+    const value = intent.meta?.execution_chain_id?.trim();
+    if (!value) {
+      return 0;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      return 0;
+    }
+    return parsed;
+  }
+
+  private async resolveUnifiedAssetContext(
+    intent: MarketIntent,
+    chainId: number
+  ): Promise<Awaited<ReturnType<UnifiedAssetService["normalize_pre_trade_assets"]>> | undefined> {
+    if (!this.unifiedAssetService || chainId <= 0) {
+      return undefined;
+    }
+
+    return this.unifiedAssetService.normalize_pre_trade_assets({
+      base_asset: intent.base_asset,
+      quote_asset: intent.quote_asset,
+      chain_id: chainId,
+      account_id: intent.account_id,
+      correlation_id: intent.correlation_id
+    });
+  }
+
+  private toNormalizedExecutionMetadata(
+    intent: MarketIntent,
+    executionChainId: number,
+    assets?: UnifiedAssetPair
+  ): NormalizedExecutionMetadata {
     const metadata = intent.meta ?? {};
     const required = (key: string): string => {
       const value = metadata[key]?.trim();
@@ -424,64 +636,69 @@ export class MarketsService {
       }
       return value;
     };
+
     const createdAt = intent.created_at ? new Date(intent.created_at) : new Date();
     const createdAtMs = Number.isNaN(createdAt.getTime()) ? Date.now() : createdAt.getTime();
 
-    return {
-      correlation_id: intent.correlation_id,
-      reference_id: intent.reference_id,
-      idempotency_key: intent.idempotency_key,
-      side: intent.side,
-      size: intent.size,
-      chain_id: executionChainId,
-      account_id: intent.account_id,
-      paymaster: metadata.aa4337_paymaster,
-      paymaster_chain_id: metadata.aa4337_paymaster_chain_id ? requiredInteger("aa4337_paymaster_chain_id") : undefined,
-      paymaster_account_id: metadata.aa4337_paymaster_account_id,
+    const normalized: NormalizedExecutionMetadata = {
+      chain_id: requiredInteger("execution_chain_id"),
+      target: normalizeAddress(required("execution_target")),
+      calldata: required("execution_calldata").toLowerCase(),
+      value: (metadata.execution_value ?? "0").trim(),
+      recipient: normalizeAddress(required("execution_recipient")),
+      amount_type: metadata.execution_amount_type === "exactOut" ? "exactOut" : "exactIn",
       amount_in: required("execution_amount_in"),
       amount_out: required("execution_amount_out"),
-      execution_target: required("execution_target"),
-      execution_calldata: required("execution_calldata"),
-      execution_value: (metadata.execution_value ?? "0").trim(),
-      execution_recipient: required("execution_recipient"),
-      deadline: new Date(createdAtMs + intent.ttl_ms).toISOString(),
+      min_out: metadata.execution_min_out?.trim(),
+      max_in: metadata.execution_max_in?.trim(),
       nonce: metadata.execution_nonce?.trim(),
+      input_token_address: normalizeAddress(required("execution_input_token_address")),
+      output_token_address: normalizeAddress(required("execution_output_token_address")),
       input_token_decimals: requiredInteger("execution_input_token_decimals"),
       output_token_decimals: requiredInteger("execution_output_token_decimals"),
+      quote_amount_in: required("execution_quote_amount_in"),
+      quote_amount_out: required("execution_quote_amount_out"),
       quote_input_token_decimals: requiredInteger("execution_quote_input_token_decimals"),
       quote_output_token_decimals: requiredInteger("execution_quote_output_token_decimals"),
-      assets
+      paymaster: metadata.aa4337_paymaster?.trim(),
+      paymaster_chain_id: metadata.aa4337_paymaster_chain_id ? requiredInteger("aa4337_paymaster_chain_id") : undefined,
+      paymaster_account_id: metadata.aa4337_paymaster_account_id?.trim(),
+      deadline: new Date(createdAtMs + intent.ttl_ms).toISOString()
     };
-  }
 
-  private resolveExecutionChainId(intent: MarketIntent): number {
-    const value = intent.meta?.execution_chain_id?.trim();
-    if (!value) {
-      return 0;
+    if (normalized.chain_id !== executionChainId) {
+      throw new QuoteConstraintViolationError("execution chain metadata is inconsistent");
     }
 
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-      return 0;
+    if (assets) {
+      if (assets.base_asset.chain_id !== executionChainId || assets.quote_asset.chain_id !== executionChainId) {
+        throw new QuoteConstraintViolationError("normalized asset chain_id is inconsistent with execution chain");
+      }
+      const expectedInputAsset = intent.side === "buy" ? assets.quote_asset : assets.base_asset;
+      const expectedOutputAsset = intent.side === "buy" ? assets.base_asset : assets.quote_asset;
+      if (
+        normalized.input_token_decimals !== expectedInputAsset.decimals ||
+        normalized.quote_input_token_decimals !== expectedInputAsset.decimals
+      ) {
+        throw new QuoteConstraintViolationError("input token decimals are inconsistent with normalized assets");
+      }
+      if (
+        normalized.output_token_decimals !== expectedOutputAsset.decimals ||
+        normalized.quote_output_token_decimals !== expectedOutputAsset.decimals
+      ) {
+        throw new QuoteConstraintViolationError("output token decimals are inconsistent with normalized assets");
+      }
+      const normalizedInputAssetAddress = expectedInputAsset.address?.toLowerCase();
+      if (normalizedInputAssetAddress && normalizedInputAssetAddress !== normalized.input_token_address) {
+        throw new QuoteConstraintViolationError("input token address is inconsistent with normalized assets");
+      }
+      const normalizedOutputAssetAddress = expectedOutputAsset.address?.toLowerCase();
+      if (normalizedOutputAssetAddress && normalizedOutputAssetAddress !== normalized.output_token_address) {
+        throw new QuoteConstraintViolationError("output token address is inconsistent with normalized assets");
+      }
     }
-    return parsed;
-  }
 
-  private async resolveUnifiedAssetContext(
-    intent: MarketIntent,
-    chainId: number
-  ): Promise<Awaited<ReturnType<UnifiedAssetService["normalize_pre_trade_assets"]>> | undefined> {
-    if (!this.unifiedAssetService) {
-      return undefined;
-    }
-
-    return this.unifiedAssetService.normalize_pre_trade_assets({
-      base_asset: intent.base_asset,
-      quote_asset: intent.quote_asset,
-      chain_id: chainId,
-      account_id: intent.account_id,
-      correlation_id: intent.correlation_id
-    });
+    return normalized;
   }
 
   private async observeAssetNormalization(

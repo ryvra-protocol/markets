@@ -107,3 +107,7 @@ Ops readiness docs:
   - `markets.aa4337.userop.submitted`
   - `markets.aa4337.userop.included`
   - `markets.aa4337.userop.failed`
+- H2 execution-path hardening metrics:
+  - `markets_allow_path_total`
+  - `markets_execution_blocked_total`
+  - `markets_execution_failure_total`

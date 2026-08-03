@@ -161,4 +161,37 @@ describe("Aa4337UserOpService", () => {
       reason_code: "aa4337_simulation_failed"
     });
   });
+
+  it("retries receipt checks without rebuilding/resending for submitted userop", async () => {
+    let buildCalls = 0;
+    let sendCalls = 0;
+    let receiptCalls = 0;
+    const runtime: AccountsRuntimeClient = {
+      build: async () => {
+        buildCalls += 1;
+        return { user_operation: {} };
+      },
+      simulate: async () => ({ success: true }),
+      send: async () => {
+        sendCalls += 1;
+        return { user_operation_hash: "0xaaa" };
+      },
+      getReceipt: async () => {
+        receiptCalls += 1;
+        if (receiptCalls === 1) {
+          return { status: "pending", reason_code: "aa4337_receipt_failed" };
+        }
+        return { status: "included", transaction_hash: "0xbbb", block_number: 123 };
+      }
+    };
+    const service = new Aa4337UserOpService(runtime);
+
+    await expect(service.execute(createExecutionInput())).rejects.toMatchObject({ reason_code: "aa4337_receipt_failed" });
+    await expect(service.execute(createExecutionInput())).resolves.toBeUndefined();
+    await expect(service.execute(createExecutionInput())).resolves.toBeUndefined();
+
+    expect(buildCalls).toBe(1);
+    expect(sendCalls).toBe(1);
+    expect(receiptCalls).toBe(2);
+  });
 });
