@@ -38,3 +38,6 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: OpenAPI lint
+        run: pnpm lint:openapi
