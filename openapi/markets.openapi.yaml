@@ -3,6 +3,9 @@ info:
   title: Ryvra Markets API
   version: "2026-08-08"
   summary: Canonical Markets API contract for Apps parity
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
   description: |
     Canonical read-model contract for Apps integrations with Markets.
 
@@ -12,10 +15,10 @@ info:
     Deprecations: deprecated routes/fields remain available for at least 180 days before removal.
     Changelog: `docs/api-contract-changelog.md` is updated in every PR that changes this contract.
 servers:
-  - url: https://api.ryvra.example.com
-    description: Canonical production endpoint (placeholder)
-  - url: https://sandbox-api.ryvra.example.com
-    description: Canonical sandbox endpoint (placeholder)
+  - url: https://api.ryvra.protocol
+    description: Canonical production endpoint
+  - url: https://sandbox.api.ryvra.protocol
+    description: Canonical sandbox endpoint
 tags:
   - name: Markets
     description: Read-model endpoints for instruments, orders, positions, and overview.
@@ -357,7 +360,7 @@ paths:
                           symbol: ETH
                           decimals: 18
                           chain_id: 1
-                          address: 0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+                          address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
                           asset_class: crypto
                         state: open
                         side: long
@@ -577,6 +580,8 @@ paths:
                       - name: execution-adapter
                         status: pass
                         latency_ms: 37
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '503':
           description: Service is unable to serve canonical contract traffic.
           headers:
@@ -1217,7 +1222,7 @@ components:
           type: string
         net_exposure_value:
           type: string
-          pattern: '^-?\\d+(\\.\\d+)?$'
+          pattern: '^-?\d+(\.\d+)?$'
         net_exposure_band:
           $ref: '#/components/schemas/NetExposureBand'
         net_exposure_bucket:
@@ -1351,16 +1356,16 @@ components:
           minimum: 1
         tick_size:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         lot_size:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         min_notional:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         max_notional:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         price_precision:
           type: integer
           minimum: 0
@@ -1421,13 +1426,13 @@ components:
           type: string
         size:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         filled_size:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         avg_execution_price:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         created_at:
           type: string
           format: date-time
@@ -1462,12 +1467,12 @@ components:
           $ref: '#/components/schemas/PositionSide'
         quantity:
           type: string
-          pattern: '^\\d+(\\.\\d+)?$'
+          pattern: '^\d+(\.\d+)?$'
         notional_quote_asset:
           type: string
         notional_value:
           type: string
-          pattern: '^-?\\d+(\\.\\d+)?$'
+          pattern: '^-?\d+(\.\d+)?$'
         net_exposure_band:
           $ref: '#/components/schemas/NetExposureBand'
         risk_flags:
