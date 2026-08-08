@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "lint": "pnpm typecheck",
+    "lint:openapi": "pnpm --package=@redocly/cli@2.46.0 dlx redocly lint openapi/markets.openapi.yaml",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "tsc -p tsconfig.json"

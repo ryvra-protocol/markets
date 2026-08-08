@@ -1,0 +1,1637 @@
+openapi: 3.1.0
+info:
+  title: Ryvra Markets API
+  version: "2026-08-08"
+  summary: Canonical Markets API contract for Apps parity
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: |
+    Canonical read-model contract for Apps integrations with Markets.
+
+    Version marker: `MARKETS_API_VERSION=2026-08-08`.
+
+    Breaking changes: only introduced with a new API version marker and an announced migration plan.
+    Deprecations: deprecated routes/fields remain available for at least 180 days before removal.
+    Changelog: `docs/api-contract-changelog.md` is updated in every PR that changes this contract.
+servers:
+  - url: https://api.ryvra.protocol
+    description: Canonical production endpoint
+  - url: https://sandbox.api.ryvra.protocol
+    description: Canonical sandbox endpoint
+tags:
+  - name: Markets
+    description: Read-model endpoints for instruments, orders, positions, and overview.
+  - name: Health
+    description: Service health and parity probe endpoint.
+security:
+  - BearerAuth: []
+x-markets-api-contract:
+  version_marker: MARKETS_API_VERSION=2026-08-08
+  breaking_change_policy: Breaking changes require a new version marker and documented migration guidance.
+  deprecation_policy:
+    minimum_migration_window_days: 180
+    default_removal_notice_days: 90
+  changelog:
+    location: docs/api-contract-changelog.md
+    update_rule: Every contract-changing PR must append a changelog entry.
+paths:
+  /markets/instruments:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsInstruments
+      summary: List market instruments
+      description: Returns canonical instrument definitions and their trading availability.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - name: q
+          in: query
+          description: Case-insensitive symbol or canonical asset search text.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - $ref: '#/components/parameters/InstrumentClassParam'
+        - $ref: '#/components/parameters/InstrumentStatusParam'
+        - $ref: '#/components/parameters/InstrumentAvailabilityParam'
+        - $ref: '#/components/parameters/ChainIdParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/PageDeprecatedParam'
+        - $ref: '#/components/parameters/InstrumentSortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+      responses:
+        '200':
+          description: Canonical page of instruments.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentListResponse'
+              examples:
+                default:
+                  summary: Instrument page example
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    data:
+                      - instrument_id: eth-usdc
+                        symbol: ETH/USDC
+                        base_asset: eth
+                        quote_asset: usdc
+                        asset_class: crypto
+                        status: active
+                        availability: tradable
+                        chain_id: 1
+                        tick_size: '0.01'
+                        lot_size: '0.0001'
+                        min_notional: '10'
+                        max_notional: '500000'
+                        price_precision: 2
+                        size_precision: 6
+                        updated_at: '2026-08-08T05:52:11Z'
+                    page:
+                      limit: 50
+                      next_cursor: inst_eyJvZmZzZXQiOjUwfQ
+                      has_more: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /markets/instruments/summary:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsInstrumentsSummary
+      summary: Get instrument summary
+      description: Returns aggregate counts for instrument inventory and availability.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/InstrumentClassParam'
+        - $ref: '#/components/parameters/InstrumentStatusParam'
+        - $ref: '#/components/parameters/InstrumentAvailabilityParam'
+      responses:
+        '200':
+          description: Instrument summary snapshot.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentSummary'
+              examples:
+                default:
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    total_instruments: 142
+                    tradable_instruments: 130
+                    halted_instruments: 4
+                    by_asset_class:
+                      crypto: 120
+                      rwa: 12
+                      metal: 10
+                    by_status:
+                      active: 130
+                      suspended: 4
+                      inactive: 8
+                    by_availability:
+                      tradable: 130
+                      close_only: 8
+                      halted: 4
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /markets/orders:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsOrders
+      summary: List market orders
+      description: Returns account-scoped canonical order records.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/AccountIdRequiredParam'
+        - $ref: '#/components/parameters/ReferenceIdParam'
+        - $ref: '#/components/parameters/CorrelationIdParam'
+        - $ref: '#/components/parameters/RouteIdParam'
+        - $ref: '#/components/parameters/OrderStatusParam'
+        - $ref: '#/components/parameters/OrderSideParam'
+        - $ref: '#/components/parameters/OrderTypeParam'
+        - $ref: '#/components/parameters/PolicyDecisionParam'
+        - $ref: '#/components/parameters/CreatedAfterParam'
+        - $ref: '#/components/parameters/CreatedBeforeParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/PageDeprecatedParam'
+        - $ref: '#/components/parameters/OrderSortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+      responses:
+        '200':
+          description: Canonical page of orders.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderListResponse'
+              examples:
+                default:
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    data:
+                      - order_id: ord_0166e3b1f5d9
+                        reference_id: ref_1f72
+                        idempotency_key: idem_7b0a2d0a
+                        correlation_id: cor_e4f15f1d
+                        account_id: acct_123
+                        route_id: route_a2
+                        side: buy
+                        type: market
+                        status: settled
+                        policy_decision: ALLOW
+                        reason_codes: []
+                        base_asset: eth
+                        quote_asset: usdc
+                        size: '1.25'
+                        filled_size: '1.25'
+                        avg_execution_price: '2810.55'
+                        created_at: '2026-08-08T05:41:22Z'
+                        updated_at: '2026-08-08T05:44:21Z'
+                    page:
+                      limit: 50
+                      has_more: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /markets/orders/summary:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsOrdersSummary
+      summary: Get order summary
+      description: Returns account-scoped order aggregates and policy outcome counters.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/AccountIdRequiredParam'
+        - $ref: '#/components/parameters/CreatedAfterParam'
+        - $ref: '#/components/parameters/CreatedBeforeParam'
+      responses:
+        '200':
+          description: Order summary snapshot.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderSummary'
+              examples:
+                default:
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    account_id: acct_123
+                    total_orders: 84
+                    open_orders: 12
+                    terminal_orders: 72
+                    review_required_orders: 3
+                    blocked_orders: 5
+                    by_status:
+                      created: 2
+                      routed: 10
+                      settled: 63
+                      failed: 9
+                    by_side:
+                      buy: 55
+                      sell: 29
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /markets/positions:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsPositions
+      summary: List account positions
+      description: Returns account-scoped canonical positions and risk flags.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/AccountIdRequiredParam'
+        - $ref: '#/components/parameters/InstrumentClassParam'
+        - $ref: '#/components/parameters/PositionStateParam'
+        - $ref: '#/components/parameters/PositionSideParam'
+        - $ref: '#/components/parameters/PositionRiskFlagParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/PageDeprecatedParam'
+        - $ref: '#/components/parameters/PositionSortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+      responses:
+        '200':
+          description: Canonical page of positions.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionListResponse'
+              examples:
+                default:
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    data:
+                      - position_id: pos_9af0
+                        account_id: acct_123
+                        asset:
+                          canonical_id: eth
+                          symbol: ETH
+                          decimals: 18
+                          chain_id: 1
+                          address: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+                          asset_class: crypto
+                        state: open
+                        side: long
+                        quantity: '4.5000'
+                        notional_quote_asset: usdc
+                        notional_value: '12647.50'
+                        net_exposure_band: medium
+                        risk_flags:
+                          - concentration_limit_near
+                        updated_at: '2026-08-08T05:54:33Z'
+                    page:
+                      limit: 50
+                      has_more: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /markets/positions/summary:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsPositionsSummary
+      summary: Get position summary
+      description: Returns aggregate position and exposure metrics for an account.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/AccountIdRequiredParam'
+      responses:
+        '200':
+          description: Position summary snapshot.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionSummary'
+              examples:
+                default:
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    account_id: acct_123
+                    total_positions: 4
+                    open_positions: 3
+                    by_state:
+                      open: 3
+                      reducing: 1
+                    by_side:
+                      long: 3
+                      short: 1
+                    net_exposure_quote_asset: usdc
+                    net_exposure_value: '8200.00'
+                    net_exposure_band: medium
+                    net_exposure_bucket: medium
+                    risk_flags:
+                      - concentration_limit_near
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /markets/overview:
+    get:
+      tags:
+        - Markets
+      operationId: getMarketsOverview
+      summary: Get portfolio and market overview
+      description: Returns a composed read model for apps dashboards.
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/AccountIdRequiredParam'
+      responses:
+        '200':
+          description: Consolidated overview snapshot.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketsOverviewResponse'
+              examples:
+                default:
+                  value:
+                    as_of: '2026-08-08T05:55:00Z'
+                    api_version: MARKETS_API_VERSION=2026-08-08
+                    account_id: acct_123
+                    health_status: pass
+                    instruments:
+                      as_of: '2026-08-08T05:55:00Z'
+                      total_instruments: 142
+                      tradable_instruments: 130
+                      halted_instruments: 4
+                      by_asset_class:
+                        crypto: 120
+                        rwa: 12
+                        metal: 10
+                      by_status:
+                        active: 130
+                        suspended: 4
+                        inactive: 8
+                      by_availability:
+                        tradable: 130
+                        close_only: 8
+                        halted: 4
+                    orders:
+                      as_of: '2026-08-08T05:55:00Z'
+                      account_id: acct_123
+                      total_orders: 84
+                      open_orders: 12
+                      terminal_orders: 72
+                      review_required_orders: 3
+                      blocked_orders: 5
+                      by_status:
+                        routed: 10
+                        settled: 63
+                        failed: 9
+                        created: 2
+                      by_side:
+                        buy: 55
+                        sell: 29
+                    positions:
+                      as_of: '2026-08-08T05:55:00Z'
+                      account_id: acct_123
+                      total_positions: 4
+                      open_positions: 3
+                      by_state:
+                        open: 3
+                        reducing: 1
+                      by_side:
+                        long: 3
+                        short: 1
+                      net_exposure_quote_asset: usdc
+                      net_exposure_value: '8200.00'
+                      net_exposure_band: medium
+                      net_exposure_bucket: medium
+                      risk_flags:
+                        - concentration_limit_near
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /health:
+    get:
+      tags:
+        - Health
+      operationId: getHealth
+      summary: Service health and parity probe
+      description: Returns health status and contract version marker; authentication is optional.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestIdHeader'
+        - $ref: '#/components/parameters/XCorrelationIdHeader'
+      responses:
+        '200':
+          description: Service is healthy or degraded but serving traffic.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                pass:
+                  value:
+                    status: pass
+                    service: markets
+                    api_version: MARKETS_API_VERSION=2026-08-08
+                    timestamp: '2026-08-08T05:55:00Z'
+                    checks:
+                      - name: policy-risk
+                        status: pass
+                        latency_ms: 21
+                      - name: execution-adapter
+                        status: pass
+                        latency_ms: 37
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          description: Service is unable to serve canonical contract traffic.
+          headers:
+            x-request-id:
+              $ref: '#/components/headers/XRequestId'
+            x-correlation-id:
+              $ref: '#/components/headers/XCorrelationId'
+            x-markets-api-version:
+              $ref: '#/components/headers/XMarketsApiVersion'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              examples:
+                fail:
+                  value:
+                    status: fail
+                    service: markets
+                    api_version: MARKETS_API_VERSION=2026-08-08
+                    timestamp: '2026-08-08T05:55:00Z'
+                    checks:
+                      - name: policy-risk
+                        status: fail
+                        latency_ms: 1500
+                        details:
+                          reason: timeout
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: HTTP bearer credential required for authenticated app requests.
+
+  headers:
+    XRequestId:
+      description: Request identifier generated or echoed by Markets API.
+      schema:
+        type: string
+    XCorrelationId:
+      description: Correlation identifier used for trace continuity across services.
+      schema:
+        type: string
+    XMarketsApiVersion:
+      description: Canonical Markets API version marker.
+      schema:
+        type: string
+        example: MARKETS_API_VERSION=2026-08-08
+
+  parameters:
+    XRequestIdHeader:
+      name: x-request-id
+      in: header
+      required: false
+      description: Optional client request id; echoed in response when supplied.
+      schema:
+        type: string
+    XCorrelationIdHeader:
+      name: x-correlation-id
+      in: header
+      required: false
+      description: Optional correlation id; generated by server if omitted.
+      schema:
+        type: string
+    IdempotencyKeyHeader:
+      name: idempotency-key
+      in: header
+      required: false
+      description: |
+        Optional for read endpoints. Required for write endpoints when published.
+        Included here for cross-surface trace continuity.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    AccountIdRequiredParam:
+      name: account_id
+      in: query
+      required: true
+      description: Canonical account identifier for account-scoped reads.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    ReferenceIdParam:
+      name: reference_id
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    CorrelationIdParam:
+      name: correlation_id
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    RouteIdParam:
+      name: route_id
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    CreatedAfterParam:
+      name: created_after
+      in: query
+      required: false
+      description: Lower bound creation time (inclusive), ISO-8601.
+      schema:
+        type: string
+        format: date-time
+    CreatedBeforeParam:
+      name: created_before
+      in: query
+      required: false
+      description: Upper bound creation time (exclusive), ISO-8601.
+      schema:
+        type: string
+        format: date-time
+    InstrumentClassParam:
+      name: asset_class
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/InstrumentClass'
+    InstrumentStatusParam:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/InstrumentStatus'
+    InstrumentAvailabilityParam:
+      name: availability
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/InstrumentAvailability'
+    ChainIdParam:
+      name: chain_id
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+    OrderStatusParam:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/OrderStatus'
+    OrderSideParam:
+      name: side
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/OrderSide'
+    OrderTypeParam:
+      name: type
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/OrderType'
+    PolicyDecisionParam:
+      name: policy_decision
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/PolicyDecisionType'
+    PositionStateParam:
+      name: state
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/PositionState'
+    PositionSideParam:
+      name: side
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/PositionSide'
+    PositionRiskFlagParam:
+      name: risk_flag
+      in: query
+      required: false
+      description: Optional comma-separated list of risk flags to match.
+      style: form
+      explode: false
+      schema:
+        type: array
+        items:
+          $ref: '#/components/schemas/PositionRiskFlag'
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      description: Page size. Default 50.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    CursorParam:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a prior response.
+      schema:
+        type: string
+        minLength: 1
+    PageDeprecatedParam:
+      name: page
+      in: query
+      required: false
+      deprecated: true
+      description: Deprecated page number alias. Will be removed no earlier than 2027-02-08; use `cursor`.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    InstrumentSortByParam:
+      name: sort_by
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - updated_at
+          - symbol
+          - asset_class
+        default: updated_at
+    OrderSortByParam:
+      name: sort_by
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - updated_at
+          - created_at
+          - status
+        default: updated_at
+    PositionSortByParam:
+      name: sort_by
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - updated_at
+          - notional_value
+          - quantity
+        default: updated_at
+    SortOrderParam:
+      name: sort_order
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+          - asc
+          - desc
+        default: desc
+
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      headers:
+        x-request-id:
+          $ref: '#/components/headers/XRequestId'
+        x-correlation-id:
+          $ref: '#/components/headers/XCorrelationId'
+        x-markets-api-version:
+          $ref: '#/components/headers/XMarketsApiVersion'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            invalidFilter:
+              value:
+                code: invalid_request
+                message: invalid `sort_by` value
+                retryable: false
+                source: markets-api
+                details:
+                  parameter: sort_by
+                  accepted_values:
+                    - updated_at
+                    - created_at
+                    - status
+    Unauthorized:
+      description: Authentication failed or missing bearer token.
+      headers:
+        x-request-id:
+          $ref: '#/components/headers/XRequestId'
+        x-correlation-id:
+          $ref: '#/components/headers/XCorrelationId'
+        x-markets-api-version:
+          $ref: '#/components/headers/XMarketsApiVersion'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            missingToken:
+              value:
+                code: unauthorized
+                message: bearer token is required
+                retryable: false
+                source: markets-api
+    Forbidden:
+      description: Caller is authenticated but not permitted for the requested account or asset.
+      headers:
+        x-request-id:
+          $ref: '#/components/headers/XRequestId'
+        x-correlation-id:
+          $ref: '#/components/headers/XCorrelationId'
+        x-markets-api-version:
+          $ref: '#/components/headers/XMarketsApiVersion'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            policyDenied:
+              value:
+                code: forbidden
+                message: account is blocked by policy-risk
+                retryable: false
+                source: policy-risk
+                reason_codes:
+                  - policy_blocked_account
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        x-request-id:
+          $ref: '#/components/headers/XRequestId'
+        x-correlation-id:
+          $ref: '#/components/headers/XCorrelationId'
+        x-markets-api-version:
+          $ref: '#/components/headers/XMarketsApiVersion'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            throttled:
+              value:
+                code: rate_limited
+                message: too many requests
+                retryable: true
+                source: markets-api
+                details:
+                  retry_after_ms: 500
+    InternalServerError:
+      description: Internal processing failure.
+      headers:
+        x-request-id:
+          $ref: '#/components/headers/XRequestId'
+        x-correlation-id:
+          $ref: '#/components/headers/XCorrelationId'
+        x-markets-api-version:
+          $ref: '#/components/headers/XMarketsApiVersion'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            internalError:
+              value:
+                code: internal_error
+                message: unexpected failure while building overview snapshot
+                retryable: true
+                source: markets-api
+    ServiceUnavailable:
+      description: Upstream dependency is unavailable or timed out.
+      headers:
+        x-request-id:
+          $ref: '#/components/headers/XRequestId'
+        x-correlation-id:
+          $ref: '#/components/headers/XCorrelationId'
+        x-markets-api-version:
+          $ref: '#/components/headers/XMarketsApiVersion'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            timeout:
+              value:
+                code: service_unavailable
+                message: policy dependency timed out
+                retryable: true
+                source: policy-risk
+                reason_codes:
+                  - policy_dependency_timeout
+
+  schemas:
+    ApiError:
+      type: object
+      required:
+        - code
+        - message
+        - retryable
+        - source
+      properties:
+        code:
+          type: string
+          enum:
+            - invalid_request
+            - unauthorized
+            - forbidden
+            - not_found
+            - rate_limited
+            - service_unavailable
+            - internal_error
+        message:
+          type: string
+          minLength: 1
+        retryable:
+          type: boolean
+        source:
+          $ref: '#/components/schemas/ErrorSource'
+        reason_codes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketReasonCode'
+        details:
+          type: object
+          additionalProperties: true
+        request_id:
+          type: string
+        correlation_id:
+          type: string
+
+    ErrorSource:
+      type: string
+      enum:
+        - markets-api
+        - policy-risk
+        - asset-registry
+        - execution-router
+        - ledger-settlement
+        - accounts-runtime
+        - unknown
+
+    Pagination:
+      type: object
+      required:
+        - limit
+        - has_more
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+
+    InstrumentListResponse:
+      type: object
+      required:
+        - as_of
+        - data
+        - page
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instrument'
+        page:
+          $ref: '#/components/schemas/Pagination'
+
+    OrderListResponse:
+      type: object
+      required:
+        - as_of
+        - data
+        - page
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        page:
+          $ref: '#/components/schemas/Pagination'
+
+    PositionListResponse:
+      type: object
+      required:
+        - as_of
+        - data
+        - page
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Position'
+        page:
+          $ref: '#/components/schemas/Pagination'
+
+    InstrumentSummary:
+      type: object
+      required:
+        - as_of
+        - total_instruments
+        - tradable_instruments
+        - halted_instruments
+        - by_asset_class
+        - by_status
+        - by_availability
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        total_instruments:
+          type: integer
+          minimum: 0
+        tradable_instruments:
+          type: integer
+          minimum: 0
+        halted_instruments:
+          type: integer
+          minimum: 0
+        by_asset_class:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        by_status:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        by_availability:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+
+    OrderSummary:
+      type: object
+      required:
+        - as_of
+        - account_id
+        - total_orders
+        - open_orders
+        - terminal_orders
+        - review_required_orders
+        - blocked_orders
+        - by_status
+        - by_side
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        account_id:
+          type: string
+        total_orders:
+          type: integer
+          minimum: 0
+        open_orders:
+          type: integer
+          minimum: 0
+        terminal_orders:
+          type: integer
+          minimum: 0
+        review_required_orders:
+          type: integer
+          minimum: 0
+        blocked_orders:
+          type: integer
+          minimum: 0
+        by_status:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        by_side:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+
+    PositionSummary:
+      type: object
+      required:
+        - as_of
+        - account_id
+        - total_positions
+        - open_positions
+        - by_state
+        - by_side
+        - net_exposure_quote_asset
+        - net_exposure_value
+        - net_exposure_band
+        - risk_flags
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        account_id:
+          type: string
+        total_positions:
+          type: integer
+          minimum: 0
+        open_positions:
+          type: integer
+          minimum: 0
+        by_state:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        by_side:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        net_exposure_quote_asset:
+          type: string
+        net_exposure_value:
+          type: string
+          pattern: '^-?\d+(\.\d+)?$'
+        net_exposure_band:
+          $ref: '#/components/schemas/NetExposureBand'
+        net_exposure_bucket:
+          type: string
+          deprecated: true
+          description: Deprecated alias for `net_exposure_band`; removed no earlier than 2027-02-08.
+        risk_flags:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PositionRiskFlag'
+
+    MarketsOverviewResponse:
+      type: object
+      required:
+        - as_of
+        - api_version
+        - account_id
+        - health_status
+        - instruments
+        - orders
+        - positions
+      properties:
+        as_of:
+          type: string
+          format: date-time
+        api_version:
+          type: string
+          example: MARKETS_API_VERSION=2026-08-08
+        account_id:
+          type: string
+        health_status:
+          type: string
+          enum:
+            - pass
+            - degraded
+            - fail
+        instruments:
+          $ref: '#/components/schemas/InstrumentSummary'
+        orders:
+          $ref: '#/components/schemas/OrderSummary'
+        positions:
+          $ref: '#/components/schemas/PositionSummary'
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - service
+        - api_version
+        - timestamp
+        - checks
+      properties:
+        status:
+          type: string
+          enum:
+            - pass
+            - degraded
+            - fail
+        service:
+          type: string
+          enum:
+            - markets
+        api_version:
+          type: string
+          example: MARKETS_API_VERSION=2026-08-08
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthCheck'
+
+    HealthCheck:
+      type: object
+      required:
+        - name
+        - status
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+            - pass
+            - degraded
+            - fail
+        latency_ms:
+          type: integer
+          minimum: 0
+        details:
+          type: object
+          additionalProperties: true
+
+    Instrument:
+      type: object
+      required:
+        - instrument_id
+        - symbol
+        - base_asset
+        - quote_asset
+        - asset_class
+        - status
+        - availability
+        - chain_id
+        - tick_size
+        - lot_size
+        - min_notional
+        - max_notional
+        - price_precision
+        - size_precision
+        - updated_at
+      properties:
+        instrument_id:
+          type: string
+        symbol:
+          type: string
+        base_asset:
+          type: string
+        quote_asset:
+          type: string
+        asset_class:
+          $ref: '#/components/schemas/InstrumentClass'
+        status:
+          $ref: '#/components/schemas/InstrumentStatus'
+        availability:
+          $ref: '#/components/schemas/InstrumentAvailability'
+        chain_id:
+          type: integer
+          minimum: 1
+        tick_size:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        lot_size:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        min_notional:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        max_notional:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        price_precision:
+          type: integer
+          minimum: 0
+          maximum: 18
+        size_precision:
+          type: integer
+          minimum: 0
+          maximum: 18
+        updated_at:
+          type: string
+          format: date-time
+
+    Order:
+      type: object
+      required:
+        - order_id
+        - reference_id
+        - idempotency_key
+        - correlation_id
+        - account_id
+        - side
+        - type
+        - status
+        - policy_decision
+        - base_asset
+        - quote_asset
+        - size
+        - created_at
+        - updated_at
+      properties:
+        order_id:
+          type: string
+        reference_id:
+          type: string
+        idempotency_key:
+          type: string
+        correlation_id:
+          type: string
+        account_id:
+          type: string
+        route_id:
+          type: string
+        side:
+          $ref: '#/components/schemas/OrderSide'
+        type:
+          $ref: '#/components/schemas/OrderType'
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        policy_decision:
+          $ref: '#/components/schemas/PolicyDecisionType'
+        reason_codes:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketReasonCode'
+        base_asset:
+          type: string
+        quote_asset:
+          type: string
+        size:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        filled_size:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        avg_execution_price:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Position:
+      type: object
+      required:
+        - position_id
+        - account_id
+        - asset
+        - state
+        - side
+        - quantity
+        - notional_quote_asset
+        - notional_value
+        - net_exposure_band
+        - risk_flags
+        - updated_at
+      properties:
+        position_id:
+          type: string
+        account_id:
+          type: string
+        asset:
+          $ref: '#/components/schemas/UnifiedAssetSnapshot'
+        state:
+          $ref: '#/components/schemas/PositionState'
+        side:
+          $ref: '#/components/schemas/PositionSide'
+        quantity:
+          type: string
+          pattern: '^\d+(\.\d+)?$'
+        notional_quote_asset:
+          type: string
+        notional_value:
+          type: string
+          pattern: '^-?\d+(\.\d+)?$'
+        net_exposure_band:
+          $ref: '#/components/schemas/NetExposureBand'
+        risk_flags:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PositionRiskFlag'
+        updated_at:
+          type: string
+          format: date-time
+
+    UnifiedAssetSnapshot:
+      type: object
+      required:
+        - canonical_id
+        - symbol
+        - decimals
+        - chain_id
+      properties:
+        canonical_id:
+          type: string
+        symbol:
+          type: string
+        decimals:
+          type: integer
+          minimum: 0
+          maximum: 36
+        chain_id:
+          type: integer
+          minimum: 1
+        address:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        asset_class:
+          $ref: '#/components/schemas/InstrumentClass'
+
+    InstrumentClass:
+      type: string
+      enum:
+        - crypto
+        - fiat
+        - rwa
+        - metal
+
+    InstrumentStatus:
+      type: string
+      enum:
+        - active
+        - inactive
+        - suspended
+        - delisted
+
+    InstrumentAvailability:
+      type: string
+      enum:
+        - tradable
+        - close_only
+        - halted
+        - view_only
+
+    OrderSide:
+      type: string
+      enum:
+        - buy
+        - sell
+
+    OrderType:
+      type: string
+      enum:
+        - market
+      description: Market is the only currently published order type.
+
+    OrderStatus:
+      type: string
+      enum:
+        - created
+        - validated
+        - routed
+        - partially_filled
+        - filled
+        - canceled
+        - expired
+        - failed
+        - settled
+
+    PolicyDecisionType:
+      type: string
+      enum:
+        - ALLOW
+        - DENY
+        - REVIEW
+
+    PositionState:
+      type: string
+      enum:
+        - open
+        - reducing
+        - closed
+        - liquidating
+        - suspended
+
+    PositionSide:
+      type: string
+      enum:
+        - long
+        - short
+        - flat
+
+    PositionRiskFlag:
+      type: string
+      enum:
+        - size_limit_near
+        - size_limit_breached
+        - concentration_limit_near
+        - concentration_limit_breached
+        - volatility_halt
+        - eligibility_restricted
+        - manual_review_required
+
+    NetExposureBand:
+      type: string
+      enum:
+        - flat
+        - low
+        - medium
+        - high
+        - critical
+
+    MarketReasonCode:
+      type: string
+      enum:
+        - policy_denied
+        - policy_review_required
+        - policy_blocked_account
+        - policy_dependency_timeout
+        - policy_dependency_ambiguous
+        - route_rejected
+        - execution_chain_invalid
+        - quote_invalid
+        - execution_guardrail_violation
+        - execution_dependency_timeout
+        - execution_dependency_failed
+        - unified_asset_invalid_chain
+        - unified_asset_invalid_decimals
+        - unified_asset_duplicate_pair
+        - unified_asset_invalid_address
+        - unified_asset_dependency_timeout
+        - unified_asset_dependency_ambiguous
+        - aa4337_chain_account_incompatible
+        - aa4337_paymaster_incompatible
+        - aa4337_amount_decimals_mismatch
+        - aa4337_replay_detected
+        - aa4337_simulation_failed
+        - aa4337_submission_failed
+        - aa4337_receipt_failed
+        - missing_receipt
+        - missing_receipt_timeout
+        - stale_pending
+        - dropped_tx
+        - reverted_tx
+        - reorg_detected
+      description: Canonical reason-code literals surfaced to clients in API responses.

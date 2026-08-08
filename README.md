@@ -38,6 +38,12 @@ pnpm test
 pnpm build
 ```
 
+## API Contract
+
+- Canonical OpenAPI contract: [`openapi/markets.openapi.yaml`](openapi/markets.openapi.yaml)
+- Versioning and compatibility policy: [`docs/api-contract.md`](docs/api-contract.md)
+- Contract changelog: [`docs/api-contract-changelog.md`](docs/api-contract-changelog.md)
+
 ## Policy gate compatibility
 
 - `MarketsService.submitIntentV2` is the PR4-native pre-trade entrypoint.
