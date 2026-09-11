@@ -187,7 +187,11 @@ describe("Aa4337UserOpService", () => {
     const service = new Aa4337UserOpService(runtime);
 
     await expect(service.execute(createExecutionInput())).rejects.toMatchObject({ reason_code: "aa4337_receipt_failed" });
-    await expect(service.execute(createExecutionInput())).resolves.toBeUndefined();
+    await expect(service.execute(createExecutionInput())).resolves.toEqual({
+      user_operation_hash: "0xaaa",
+      transaction_hash: "0xbbb",
+      block_number: 123
+    });
     await expect(service.execute(createExecutionInput())).resolves.toBeUndefined();
 
     expect(buildCalls).toBe(1);

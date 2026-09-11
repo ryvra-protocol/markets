@@ -58,6 +58,12 @@ export type Aa4337ExecutionObservedEvent =
 
 export type Aa4337ExecutionObserver = (event: Aa4337ExecutionObservedEvent) => void | Promise<void>;
 
+export interface Aa4337ExecutionResult {
+  user_operation_hash: string;
+  transaction_hash?: string;
+  block_number?: number;
+}
+
 export interface Aa4337ExecutionInput {
   correlation_id: string;
   reference_id: string;

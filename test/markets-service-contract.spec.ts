@@ -32,24 +32,8 @@ const intent: MarketIntent = {
   account_id: "acct-1"
 };
 
-const createProgrammableIntent = (overrides: Partial<MarketIntent> = {}): MarketIntent => ({
-  ...intent,
-  created_at: "2026-01-01T00:00:00.000Z",
-  actorType: "AGENT",
-  actorId: "actor-1",
-  agentId: "agent-1",
-  mandateId: "mandate-1",
-  riskAssessmentId: "risk-1",
-  authorizationId: "auth-1",
-  policyVersion: "policy-risk@2.0.0",
-  policyHash: "policy-hash-1",
-  intentId: "intent-1",
-  executionMode: "PUBLIC",
-  privacyMode: "TRANSPARENT",
-  meta: {
-    execution_venue: "uniswap"
-  },
-  authority: {
+const createProgrammableIntent = (overrides: Partial<MarketIntent> = {}): MarketIntent => {
+  const baseAuthority = {
     mandate_scope: {
       action: "trade",
       venue: "uniswap",
@@ -58,11 +42,11 @@ const createProgrammableIntent = (overrides: Partial<MarketIntent> = {}): Market
       active: true
     },
     policy: {
-      decision: "ALLOW",
+      decision: "ALLOW" as const,
       compatible: true
     },
     risk: {
-      decision: "ALLOW",
+      decision: "ALLOW" as const,
       compatible: true,
       autonomy_level: "AUTONOMOUS",
       within_limits: true
@@ -73,39 +57,33 @@ const createProgrammableIntent = (overrides: Partial<MarketIntent> = {}): Market
       funding_ready: true
     },
     intent_expires_at: "2027-01-01T00:00:00.000Z"
-  },
-  ...overrides,
-  meta: {
-    execution_venue: "uniswap",
-    ...(overrides.meta ?? {})
-  },
-  authority: {
-    mandate_scope: {
-      action: "trade",
-      venue: "uniswap",
-      instrument: "BTC/USD",
-      approved: true,
-      active: true
+  };
+
+  return {
+    ...intent,
+    created_at: "2026-01-01T00:00:00.000Z",
+    actorType: "AGENT",
+    actorId: "actor-1",
+    agentId: "agent-1",
+    mandateId: "mandate-1",
+    riskAssessmentId: "risk-1",
+    authorizationId: "auth-1",
+    policyVersion: "policy-risk@2.0.0",
+    policyHash: "policy-hash-1",
+    intentId: "intent-1",
+    executionMode: "PUBLIC",
+    privacyMode: "TRANSPARENT",
+    ...overrides,
+    meta: {
+      execution_venue: "uniswap",
+      ...(overrides.meta ?? {})
     },
-    policy: {
-      decision: "ALLOW",
-      compatible: true
-    },
-    risk: {
-      decision: "ALLOW",
-      compatible: true,
-      autonomy_level: "AUTONOMOUS",
-      within_limits: true
-    },
-    funding: {
-      required: true,
-      reservation_ready: true,
-      funding_ready: true
-    },
-    intent_expires_at: "2027-01-01T00:00:00.000Z",
-    ...(overrides.authority ?? {})
-  }
-});
+    authority: {
+      ...baseAuthority,
+      ...(overrides.authority ?? {})
+    }
+  };
+};
 
 describe("policy + idempotency contract alignment", () => {
   it("enforces DENY reason_codes non-empty", async () => {
@@ -287,11 +265,11 @@ describe("policy + idempotency contract alignment", () => {
         valid_until: "2100-01-01T00:00:00.000Z",
         source: "rfq"
       }),
-      submit: async () => ({
+      submit: async (submittedIntent) => ({
         route_id: "route-1",
         status: "accepted",
-        reference_id: "ref-1",
-        correlation_id: "corr-1"
+        reference_id: submittedIntent.reference_id,
+        correlation_id: submittedIntent.correlation_id
       }),
       cancel: async () => {}
     };
@@ -593,11 +571,11 @@ describe("policy + idempotency contract alignment", () => {
         valid_until: "2100-01-01T00:00:00.000Z",
         source: "rfq"
       }),
-      submit: async () => ({
+      submit: async (submittedIntent) => ({
         route_id: "route-1",
         status: "accepted",
-        reference_id: "ref-1",
-        correlation_id: "corr-1"
+        reference_id: submittedIntent.reference_id,
+        correlation_id: submittedIntent.correlation_id
       }),
       cancel: async () => {}
     };
