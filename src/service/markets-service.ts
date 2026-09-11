@@ -49,6 +49,23 @@ export class PolicyDeniedError extends Error {
   }
 }
 
+interface ObservedProvenance {
+  actorType?: "USER" | "APP" | "AGENT";
+  actorId?: string;
+  agentId?: string;
+  mandateId?: string;
+  intentId?: string;
+  authorizationId?: string;
+  riskAssessmentId?: string;
+  policyVersion?: string;
+  policyHash?: string;
+  userOperationHash?: string;
+  executionMode: "PUBLIC" | "PRIVATE" | "CONFIDENTIAL";
+  privacyMode: "TRANSPARENT" | "SHIELDED" | "CONFIDENTIAL";
+  txHash?: string;
+  settlementId?: string;
+}
+
 export interface PolicyDecisionObservedEvent {
   event_type: "markets.policy.decision";
   timestamp: string;
@@ -60,11 +77,13 @@ export interface PolicyDecisionObservedEvent {
     reason_codes: readonly string[];
     explanation: string;
   };
+  provenance?: ObservedProvenance;
   sanitized_context: {
     has_trade_intent: boolean;
     has_quote: boolean;
     has_fee_breakdown: boolean;
     has_execution_plan: boolean;
+    has_authority: boolean;
   };
 }
 
@@ -80,6 +99,7 @@ export interface SettlementSubmissionObservedEvent {
   chainId?: number;
   txHash?: string;
   blockNumber?: number;
+  provenance?: ObservedProvenance;
   status: "submitted";
 }
 
@@ -105,6 +125,9 @@ export interface MarketsExecutionObservedEvent {
   correlation_id: string;
   reference_id: string;
   idempotency_key: string;
+  execution_mode?: "PUBLIC" | "PRIVATE" | "CONFIDENTIAL";
+  privacy_mode?: "TRANSPARENT" | "SHIELDED" | "CONFIDENTIAL";
+  provenance?: ObservedProvenance;
   reason_codes?: readonly string[];
   reason_code?: string;
 }
@@ -202,17 +225,24 @@ export class MarketsService {
 
   async submitIntentV2(intent: MarketIntent): Promise<SubmitIntentV2Result> {
     const idempotencyCacheKey = `${intent.account_id ?? ""}:${intent.idempotency_key}`;
+    const programmableAuthorityFlow = this.isProgrammableAuthorityFlow(intent);
     const replayError = this.idempotentErrors.get(idempotencyCacheKey);
+    const replayResult = this.idempotentResults.get(idempotencyCacheKey);
+    if (programmableAuthorityFlow && (replayError || replayResult)) {
+      return this.blockExecution(intent, idempotencyCacheKey, ["idempotency_replay_detected"]);
+    }
     if (replayError) {
       throw replayError;
     }
-
-    const replayResult = this.idempotentResults.get(idempotencyCacheKey);
     if (replayResult) {
       return replayResult;
     }
 
     const executionChainId = this.resolveExecutionChainId(intent);
+    const authorityReasonCode = this.validateProgrammableAuthority(intent);
+    if (authorityReasonCode) {
+      return this.blockExecution(intent, idempotencyCacheKey, [authorityReasonCode]);
+    }
 
     let unifiedAssetContext: Awaited<ReturnType<UnifiedAssetService["normalize_pre_trade_assets"]>> | undefined;
     try {
@@ -292,13 +322,14 @@ export class MarketsService {
           this.toExecutionBuildInput(intent, quote, policyDecision, normalizedExecution!, unifiedAssetContext?.assets)
         );
       }
+      const aaExecutionResult =
+        this.aa4337UserOpService && unifiedAssetContext?.assets
+          ? await this.aa4337UserOpService.execute(
+              this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, normalizedExecution!)
+            )
+          : undefined;
       if (this.aa4337UserOpService && !unifiedAssetContext?.assets) {
         throw new QuoteConstraintViolationError("aa4337 execution requires normalized unified assets");
-      }
-      if (this.aa4337UserOpService && unifiedAssetContext?.assets) {
-        await this.aa4337UserOpService.execute(
-          this.toAa4337ExecutionInput(intent, unifiedAssetContext.assets, normalizedExecution!)
-        );
       }
 
       const route = await this.router.route(intent, quote);
@@ -316,9 +347,10 @@ export class MarketsService {
         order_id: intent.reference_id,
         route_id: route.route_id,
         reference_id: route.reference_id,
-        correlation_id: route.correlation_id
+        correlation_id: route.correlation_id,
+        provenance: this.toSettlementProvenance(intent, aaExecutionResult?.user_operation_hash)
       });
-      await this.observeSettlementSubmission(intent, route.route_id, route.correlation_id, settlement);
+      await this.observeSettlementSubmission(intent, route.route_id, route.correlation_id, settlement, aaExecutionResult?.user_operation_hash);
 
       const acceptedResult = {
         accepted: true as const,
@@ -364,7 +396,10 @@ export class MarketsService {
       timestamp: new Date().toISOString(),
       correlation_id: intent.correlation_id,
       reference_id: intent.reference_id,
-      idempotency_key: intent.idempotency_key
+      idempotency_key: intent.idempotency_key,
+      execution_mode: this.getExecutionMode(intent),
+      privacy_mode: this.getPrivacyMode(intent),
+      provenance: this.toObservedProvenance(intent)
     });
     this.metrics?.incrementCounter("markets_allow_path_total", { chain_id: intent.meta?.execution_chain_id?.trim() || "unknown" });
   }
@@ -376,6 +411,9 @@ export class MarketsService {
       correlation_id: intent.correlation_id,
       reference_id: intent.reference_id,
       idempotency_key: intent.idempotency_key,
+      execution_mode: this.getExecutionMode(intent),
+      privacy_mode: this.getPrivacyMode(intent),
+      provenance: this.toObservedProvenance(intent),
       reason_codes
     });
     this.metrics?.incrementCounter("markets_execution_blocked_total", {
@@ -390,6 +428,9 @@ export class MarketsService {
       correlation_id: intent.correlation_id,
       reference_id: intent.reference_id,
       idempotency_key: intent.idempotency_key,
+      execution_mode: this.getExecutionMode(intent),
+      privacy_mode: this.getPrivacyMode(intent),
+      provenance: this.toObservedProvenance(intent),
       reason_code
     });
     this.metrics?.incrementCounter("markets_execution_failure_total", { reason_code });
@@ -399,7 +440,8 @@ export class MarketsService {
     intent: MarketIntent,
     executionId: string,
     correlationId: string,
-    settlement: { settlement_id: string; chainId?: number; txHash?: string; blockNumber?: number }
+    settlement: { settlement_id: string; chainId?: number; txHash?: string; blockNumber?: number },
+    userOperationHash?: string
   ): Promise<void> {
     if (!this.settlementSubmissionObserver) {
       return;
@@ -409,12 +451,17 @@ export class MarketsService {
       event_type: "settlement.submitted",
       timestamp: new Date().toISOString(),
       settlement_id: settlement.settlement_id,
-      intent_id: intent.reference_id,
+      intent_id: intent.intentId ?? intent.reference_id,
       execution_id: executionId,
       correlation_id: correlationId,
       chainId: settlement.chainId,
       txHash: settlement.txHash,
       blockNumber: settlement.blockNumber,
+      provenance: this.toObservedProvenance(intent, {
+        userOperationHash,
+        txHash: settlement.txHash,
+        settlementId: settlement.settlement_id
+      }),
       status: "submitted"
     });
   }
@@ -444,7 +491,7 @@ export class MarketsService {
     const baseAsset = assets?.base_asset.canonical_id ?? intent.base_asset;
     const quoteAsset = assets?.quote_asset.canonical_id ?? intent.quote_asset;
     return {
-      intent_id: intent.reference_id,
+      intent_id: intent.intentId ?? intent.reference_id,
       correlation_id: intent.correlation_id,
       idempotency_key: intent.idempotency_key,
       side: intent.side,
@@ -459,7 +506,18 @@ export class MarketsService {
       chainId: chainId ?? 0,
       slippageBps: intent.max_slippage_bps,
       deadline,
-      metadata: intent.meta
+      metadata: intent.meta,
+      actorType: intent.actorType,
+      actorId: intent.actorId,
+      agentId: intent.agentId,
+      mandateId: intent.mandateId,
+      riskAssessmentId: intent.riskAssessmentId,
+      authorizationId: intent.authorizationId,
+      policyVersion: intent.policyVersion,
+      policyHash: intent.policyHash,
+      privacyMode: this.getPrivacyMode(intent),
+      executionMode: this.getExecutionMode(intent),
+      authority: intent.authority
     };
   }
 
@@ -507,7 +565,8 @@ export class MarketsService {
         amountOut: normalizedExecution.quote_amount_out,
         inputTokenDecimals: normalizedExecution.quote_input_token_decimals,
         outputTokenDecimals: normalizedExecution.quote_output_token_decimals
-      }
+      },
+      provenance: this.toSettlementProvenance(intent)
     };
   }
 
@@ -536,11 +595,13 @@ export class MarketsService {
         reason_codes: policyDecision.reason_codes ?? [],
         explanation: policyDecision.explanation
       },
+      provenance: this.toObservedProvenance(intent),
       sanitized_context: {
         has_trade_intent: Boolean(input.domain_context.trade_intent),
         has_quote: Boolean(input.domain_context.quote),
         has_fee_breakdown: Boolean(input.domain_context.fee_breakdown),
-        has_execution_plan: Boolean(input.domain_context.execution_plan)
+        has_execution_plan: Boolean(input.domain_context.execution_plan),
+        has_authority: Boolean(input.domain_context.trade_intent?.authority)
       }
     });
   }
@@ -712,5 +773,146 @@ export class MarketsService {
         quote_asset_canonical_id: assets.quote_asset.canonical_id
       }
     });
+  }
+
+  private isProgrammableAuthorityFlow(intent: MarketIntent): boolean {
+    return (
+      intent.actorType === "AGENT" ||
+      intent.actorType === "APP" ||
+      Boolean(intent.agentId?.trim()) ||
+      Boolean(intent.mandateId?.trim()) ||
+      Boolean(intent.authorizationId?.trim())
+    );
+  }
+
+  private validateProgrammableAuthority(intent: MarketIntent): string | undefined {
+    if (this.getExecutionMode(intent) === "CONFIDENTIAL") {
+      return "execution_mode_confidential_unsupported";
+    }
+    if (!this.isProgrammableAuthorityFlow(intent)) {
+      return undefined;
+    }
+
+    if (!intent.actorId?.trim()) {
+      return "actor_id_required";
+    }
+    if (intent.actorType === "AGENT" && !intent.agentId?.trim()) {
+      return "agent_id_required";
+    }
+    if (!intent.mandateId?.trim()) {
+      return "mandate_id_required";
+    }
+    if (!intent.authorizationId?.trim()) {
+      return "authorization_id_required";
+    }
+    if (!intent.riskAssessmentId?.trim()) {
+      return "risk_assessment_id_required";
+    }
+    if (!intent.intentId?.trim()) {
+      return "intent_id_required";
+    }
+    if (!intent.policyVersion?.trim() && !intent.policyHash?.trim()) {
+      return "policy_reference_required";
+    }
+
+    const scope = intent.authority?.mandate_scope;
+    if (!scope?.approved || !scope.active) {
+      return "mandate_scope_invalid";
+    }
+    const requestedInstrument = `${intent.base_asset}/${intent.quote_asset}`.toLowerCase();
+    if (scope.instrument.trim().toLowerCase() !== requestedInstrument) {
+      return "mandate_scope_invalid";
+    }
+    const requestedVenue = intent.meta?.execution_venue?.trim().toLowerCase();
+    if (!scope.venue.trim() || (requestedVenue && scope.venue.trim().toLowerCase() !== requestedVenue)) {
+      return "mandate_scope_invalid";
+    }
+    const requestedAction = intent.side.toLowerCase();
+    const scopeAction = scope.action.trim().toLowerCase();
+    if (scopeAction !== "trade" && scopeAction !== requestedAction) {
+      return "mandate_scope_invalid";
+    }
+
+    const policy = intent.authority?.policy;
+    if (!policy || policy.decision !== "ALLOW" || !policy.compatible) {
+      return "policy_action_mismatch";
+    }
+
+    const risk = intent.authority?.risk;
+    if (!risk || risk.decision !== "ALLOW" || !risk.compatible || !risk.within_limits) {
+      return "risk_limits_mismatch";
+    }
+
+    const funding = intent.authority?.funding;
+    if (funding?.required && (funding.reservation_ready !== true || funding.funding_ready !== true)) {
+      return "funding_not_ready";
+    }
+
+    const expiry = this.getIntentExpiry(intent);
+    if (!expiry || expiry.getTime() <= Date.now()) {
+      return "intent_window_expired";
+    }
+
+    return undefined;
+  }
+
+  private getExecutionMode(intent: MarketIntent): "PUBLIC" | "PRIVATE" | "CONFIDENTIAL" {
+    return intent.executionMode ?? "PUBLIC";
+  }
+
+  private getPrivacyMode(intent: MarketIntent): "TRANSPARENT" | "SHIELDED" | "CONFIDENTIAL" {
+    return intent.privacyMode ?? "TRANSPARENT";
+  }
+
+  private getIntentExpiry(intent: MarketIntent): Date | undefined {
+    const explicitExpiry = intent.authority?.intent_expires_at?.trim();
+    if (explicitExpiry) {
+      const parsed = new Date(explicitExpiry);
+      return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+    }
+
+    const createdAt = intent.created_at ? new Date(intent.created_at) : new Date();
+    const createdAtMs = Number.isNaN(createdAt.getTime()) ? Date.now() : createdAt.getTime();
+    return new Date(createdAtMs + intent.ttl_ms);
+  }
+
+  private toSettlementProvenance(intent: MarketIntent, userOperationHash?: string) {
+    return {
+      actorType: intent.actorType,
+      actorId: intent.actorId,
+      agentId: intent.agentId,
+      mandateId: intent.mandateId,
+      intentId: intent.intentId ?? intent.reference_id,
+      authorizationId: intent.authorizationId,
+      riskAssessmentId: intent.riskAssessmentId,
+      policyVersion: intent.policyVersion,
+      policyHash: intent.policyHash,
+      userOperationHash: userOperationHash ?? intent.authority?.user_operation_hash,
+      executionMode: this.getExecutionMode(intent),
+      privacyMode: this.getPrivacyMode(intent)
+    };
+  }
+
+  private toObservedProvenance(intent: MarketIntent, overrides: Partial<ObservedProvenance> = {}): ObservedProvenance {
+    const full: ObservedProvenance = {
+      ...this.toSettlementProvenance(intent, overrides.userOperationHash),
+      txHash: overrides.txHash,
+      settlementId: overrides.settlementId
+    };
+
+    if (full.executionMode === "PUBLIC" && full.privacyMode === "TRANSPARENT") {
+      return full;
+    }
+
+    return {
+      executionMode: full.executionMode,
+      privacyMode: full.privacyMode,
+      intentId: full.intentId,
+      agentId: full.agentId,
+      mandateId: full.mandateId,
+      policyVersion: full.policyVersion,
+      txHash: full.txHash,
+      settlementId: full.settlementId
+    };
   }
 }

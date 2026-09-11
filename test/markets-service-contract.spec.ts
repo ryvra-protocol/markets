@@ -32,6 +32,81 @@ const intent: MarketIntent = {
   account_id: "acct-1"
 };
 
+const createProgrammableIntent = (overrides: Partial<MarketIntent> = {}): MarketIntent => ({
+  ...intent,
+  created_at: "2026-01-01T00:00:00.000Z",
+  actorType: "AGENT",
+  actorId: "actor-1",
+  agentId: "agent-1",
+  mandateId: "mandate-1",
+  riskAssessmentId: "risk-1",
+  authorizationId: "auth-1",
+  policyVersion: "policy-risk@2.0.0",
+  policyHash: "policy-hash-1",
+  intentId: "intent-1",
+  executionMode: "PUBLIC",
+  privacyMode: "TRANSPARENT",
+  meta: {
+    execution_venue: "uniswap"
+  },
+  authority: {
+    mandate_scope: {
+      action: "trade",
+      venue: "uniswap",
+      instrument: "BTC/USD",
+      approved: true,
+      active: true
+    },
+    policy: {
+      decision: "ALLOW",
+      compatible: true
+    },
+    risk: {
+      decision: "ALLOW",
+      compatible: true,
+      autonomy_level: "AUTONOMOUS",
+      within_limits: true
+    },
+    funding: {
+      required: true,
+      reservation_ready: true,
+      funding_ready: true
+    },
+    intent_expires_at: "2027-01-01T00:00:00.000Z"
+  },
+  ...overrides,
+  meta: {
+    execution_venue: "uniswap",
+    ...(overrides.meta ?? {})
+  },
+  authority: {
+    mandate_scope: {
+      action: "trade",
+      venue: "uniswap",
+      instrument: "BTC/USD",
+      approved: true,
+      active: true
+    },
+    policy: {
+      decision: "ALLOW",
+      compatible: true
+    },
+    risk: {
+      decision: "ALLOW",
+      compatible: true,
+      autonomy_level: "AUTONOMOUS",
+      within_limits: true
+    },
+    funding: {
+      required: true,
+      reservation_ready: true,
+      funding_ready: true
+    },
+    intent_expires_at: "2027-01-01T00:00:00.000Z",
+    ...(overrides.authority ?? {})
+  }
+});
+
 describe("policy + idempotency contract alignment", () => {
   it("enforces DENY reason_codes non-empty", async () => {
     const policy: PolicyClient = {
@@ -179,6 +254,405 @@ describe("policy + idempotency contract alignment", () => {
     expect(quoteFetchCount).toBe(1);
     expect(routeSubmitCount).toBe(1);
     expect(settleCount).toBe(1);
+  });
+
+  it("accepts agentic intents with deterministic authority checks and propagates provenance", async () => {
+    let capturedTradeIntent: unknown;
+    let settlementRequest: Awaited<ReturnType<LedgerClient["settle"]>> | undefined;
+    let capturedSettlementPayload: Parameters<LedgerClient["settle"]>[0] | undefined;
+    const executionEvents: unknown[] = [];
+    const settlementEvents: SettlementSubmissionObservedEvent[] = [];
+    const policy: PolicyClient = {
+      pre_trade_check_with_context: async (input) => {
+        capturedTradeIntent = input.domain_context.trade_intent;
+        return {
+          decision: "ALLOW",
+          policy_version: "policy-risk@2.1.0",
+          explanation: "Allowed"
+        };
+      },
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => ({
+        route_id: "route-1",
+        status: "accepted",
+        reference_id: "ref-1",
+        correlation_id: "corr-1"
+      }),
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async (request) => {
+        capturedSettlementPayload = request;
+        settlementRequest = {
+          settlement_id: "settle-1",
+          chainId: 1,
+          txHash: "0xabc",
+          blockNumber: 44,
+          status: "submitted"
+        };
+        return settlementRequest;
+      }
+    };
+
+    const service = new MarketsService(
+      policy,
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      (event) => {
+        settlementEvents.push(event);
+      },
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        executionEvents.push(event);
+      }
+    );
+
+    const result = await service.submitIntentV2(createProgrammableIntent());
+
+    expect(result.accepted).toBe(true);
+    expect(capturedTradeIntent).toMatchObject({
+      intent_id: "intent-1",
+      actorType: "AGENT",
+      actorId: "actor-1",
+      agentId: "agent-1",
+      mandateId: "mandate-1",
+      riskAssessmentId: "risk-1",
+      authorizationId: "auth-1",
+      policyVersion: "policy-risk@2.0.0",
+      policyHash: "policy-hash-1",
+      executionMode: "PUBLIC",
+      privacyMode: "TRANSPARENT"
+    });
+    expect(capturedSettlementPayload).toMatchObject({
+      provenance: {
+        actorType: "AGENT",
+        actorId: "actor-1",
+        agentId: "agent-1",
+        mandateId: "mandate-1",
+        intentId: "intent-1",
+        authorizationId: "auth-1",
+        riskAssessmentId: "risk-1",
+        policyVersion: "policy-risk@2.0.0",
+        policyHash: "policy-hash-1",
+        executionMode: "PUBLIC",
+        privacyMode: "TRANSPARENT"
+      }
+    });
+    expect(settlementEvents[0]).toMatchObject({
+      settlement_id: "settle-1",
+      intent_id: "intent-1",
+      provenance: {
+        actorId: "actor-1",
+        authorizationId: "auth-1",
+        riskAssessmentId: "risk-1",
+        txHash: "0xabc",
+        settlementId: "settle-1"
+      }
+    });
+    expect(executionEvents[0]).toMatchObject({
+      event_type: "markets.execution.allowed",
+      execution_mode: "PUBLIC",
+      privacy_mode: "TRANSPARENT",
+      provenance: {
+        actorId: "actor-1",
+        authorizationId: "auth-1"
+      }
+    });
+  });
+
+  it("rejects agentic flows missing mandate references", async () => {
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => {
+        throw new Error("should not fetch quote");
+      },
+      submit: async () => {
+        throw new Error("should not submit route");
+      },
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+
+    const service = new MarketsService(policy, new ExecutionRouter(adapter), new QuoteValidator(), ledger);
+    const result = await service.submitIntentV2(createProgrammableIntent({ mandateId: undefined }));
+
+    expect(result).toEqual({
+      accepted: false,
+      reason_codes: ["mandate_id_required"]
+    });
+  });
+
+  it("rejects policy and risk mismatches for agentic flows", async () => {
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => {
+        throw new Error("should not fetch quote");
+      },
+      submit: async () => {
+        throw new Error("should not submit route");
+      },
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const service = new MarketsService(policy, new ExecutionRouter(adapter), new QuoteValidator(), ledger);
+
+    await expect(
+      service.submitIntentV2(
+        createProgrammableIntent({
+          authority: {
+            ...createProgrammableIntent().authority,
+            policy: {
+              decision: "ALLOW",
+              compatible: false
+            }
+          }
+        })
+      )
+    ).resolves.toEqual({
+      accepted: false,
+      reason_codes: ["policy_action_mismatch"]
+    });
+
+    await expect(
+      service.submitIntentV2(
+        createProgrammableIntent({
+          idempotency_key: "idem-risk-mismatch",
+          authority: {
+            ...createProgrammableIntent().authority,
+            risk: {
+              decision: "ALLOW",
+              compatible: true,
+              autonomy_level: "AUTONOMOUS",
+              within_limits: false
+            }
+          }
+        })
+      )
+    ).resolves.toEqual({
+      accepted: false,
+      reason_codes: ["risk_limits_mismatch"]
+    });
+  });
+
+  it("rejects unsupported confidential execution mode deterministically", async () => {
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => {
+        throw new Error("should not fetch quote");
+      },
+      submit: async () => {
+        throw new Error("should not submit route");
+      },
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const service = new MarketsService(policy, new ExecutionRouter(adapter), new QuoteValidator(), ledger);
+
+    const result = await service.submitIntentV2(createProgrammableIntent({ executionMode: "CONFIDENTIAL" }));
+    expect(result).toEqual({
+      accepted: false,
+      reason_codes: ["execution_mode_confidential_unsupported"]
+    });
+  });
+
+  it("rejects replayed idempotency keys for agentic flows", async () => {
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => ({
+        route_id: "route-1",
+        status: "accepted",
+        reference_id: "ref-1",
+        correlation_id: "corr-1"
+      }),
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const service = new MarketsService(policy, new ExecutionRouter(adapter), new QuoteValidator(), ledger);
+
+    const first = await service.submitIntentV2(createProgrammableIntent());
+    const replay = await service.submitIntentV2(createProgrammableIntent());
+
+    expect(first.accepted).toBe(true);
+    expect(replay).toEqual({
+      accepted: false,
+      reason_codes: ["idempotency_replay_detected"]
+    });
+  });
+
+  it("rejects expired agentic intents", async () => {
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({ decision: "ALLOW" }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => {
+        throw new Error("should not fetch quote");
+      },
+      submit: async () => {
+        throw new Error("should not submit route");
+      },
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1" })
+    };
+    const service = new MarketsService(policy, new ExecutionRouter(adapter), new QuoteValidator(), ledger);
+
+    const result = await service.submitIntentV2(
+      createProgrammableIntent({
+        authority: {
+          ...createProgrammableIntent().authority,
+          intent_expires_at: "2025-01-01T00:00:00.000Z"
+        }
+      })
+    );
+
+    expect(result).toEqual({
+      accepted: false,
+      reason_codes: ["intent_window_expired"]
+    });
+  });
+
+  it("redacts provenance for private or shielded flows", async () => {
+    const settlementEvents: SettlementSubmissionObservedEvent[] = [];
+    const executionEvents: unknown[] = [];
+    const policy: PolicyClient = {
+      pre_trade_check: async () => ({
+        decision: "ALLOW",
+        policy_version: "policy-risk@2.0.0",
+        explanation: "Allowed"
+      }),
+      pre_settlement_check: async () => ({ decision: "ALLOW" })
+    };
+    const adapter: ExecutionAdapter = {
+      name: "test",
+      fetch_quote: async () => ({
+        quote_id: "q-1",
+        base_asset: "BTC",
+        quote_asset: "USD",
+        side: "buy",
+        price: 100000,
+        max_size: 10,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2100-01-01T00:00:00.000Z",
+        source: "rfq"
+      }),
+      submit: async () => ({
+        route_id: "route-1",
+        status: "accepted",
+        reference_id: "ref-1",
+        correlation_id: "corr-1"
+      }),
+      cancel: async () => {}
+    };
+    const ledger: LedgerClient = {
+      settle: async () => ({ settlement_id: "settle-1", txHash: "0xabc" })
+    };
+    const service = new MarketsService(
+      policy,
+      new ExecutionRouter(adapter),
+      new QuoteValidator(),
+      ledger,
+      undefined,
+      undefined,
+      (event) => {
+        settlementEvents.push(event);
+      },
+      undefined,
+      undefined,
+      undefined,
+      (event) => {
+        executionEvents.push(event);
+      }
+    );
+
+    await service.submitIntentV2(
+      createProgrammableIntent({
+        idempotency_key: "idem-private-1",
+        correlation_id: "corr-private-1",
+        reference_id: "ref-private-1",
+        intentId: "intent-private-1",
+        executionMode: "PRIVATE",
+        privacyMode: "SHIELDED"
+      })
+    );
+
+    expect(executionEvents[0]).toMatchObject({
+      event_type: "markets.execution.allowed",
+      execution_mode: "PRIVATE",
+      privacy_mode: "SHIELDED",
+      provenance: {
+        intentId: "intent-private-1",
+        agentId: "agent-1",
+        mandateId: "mandate-1"
+      }
+    });
+    expect(executionEvents[0]).not.toMatchObject({
+      provenance: {
+        actorId: "actor-1"
+      }
+    });
+    expect(settlementEvents[0]).not.toMatchObject({
+      provenance: {
+        authorizationId: "auth-1"
+      }
+    });
   });
 
   it("emits sanitized policy decision observability event", async () => {

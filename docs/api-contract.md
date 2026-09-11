@@ -62,5 +62,7 @@
 - Use `/markets/*` canonical route set and bearer authentication.
 - Send `x-request-id` and `x-correlation-id` for traceability.
 - Use cursor pagination for list endpoints.
+- Use `intent_id`, `agent_id`, and `mandate_id` filters for programmable-authority audit workflows.
+- Expect additive provenance fields on order read models and explicit `execution_mode` / `privacy_mode` semantics.
 - Consume canonical error payload fields: `code`, `message`, `retryable`, `source`, and optional `details`.
 - Migrate any `net_exposure_bucket` handling to `net_exposure_band` before the removal window closes.

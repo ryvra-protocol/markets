@@ -3,6 +3,8 @@ import type { PolicyDecision } from "./policy-decision.js";
 import type { TradeIntent } from "./trade-intent.js";
 
 const MAX_SLIPPAGE_BPS = 10_000;
+const EXECUTION_MODES = new Set(["PUBLIC", "PRIVATE", "CONFIDENTIAL"]);
+const PRIVACY_MODES = new Set(["TRANSPARENT", "SHIELDED", "CONFIDENTIAL"]);
 
 function parseAtomicAmount(amount: string, field: string): bigint {
   if (!/^\d+$/.test(amount)) {
@@ -24,6 +26,42 @@ export function assertValidTradeIntent(intent: TradeIntent, now: Date = new Date
 
   if (!intent.intent_id || !intent.correlation_id || !intent.idempotency_key) {
     throw new Error("canonical identifiers are required");
+  }
+
+  if (intent.executionMode && !EXECUTION_MODES.has(intent.executionMode)) {
+    throw new Error("executionMode is invalid");
+  }
+  if (intent.privacyMode && !PRIVACY_MODES.has(intent.privacyMode)) {
+    throw new Error("privacyMode is invalid");
+  }
+
+  const programmableAuthorityFlow =
+    intent.actorType === "AGENT" ||
+    intent.actorType === "APP" ||
+    Boolean(intent.agentId?.trim()) ||
+    Boolean(intent.mandateId?.trim()) ||
+    Boolean(intent.authorizationId?.trim());
+  if (!programmableAuthorityFlow) {
+    return;
+  }
+
+  if (!intent.actorId?.trim()) {
+    throw new Error("actorId is required for programmable authority flows");
+  }
+  if (intent.actorType === "AGENT" && !intent.agentId?.trim()) {
+    throw new Error("agentId is required for agent flows");
+  }
+  if (!intent.mandateId?.trim()) {
+    throw new Error("mandateId is required for programmable authority flows");
+  }
+  if (!intent.riskAssessmentId?.trim()) {
+    throw new Error("riskAssessmentId is required for programmable authority flows");
+  }
+  if (!intent.authorizationId?.trim()) {
+    throw new Error("authorizationId is required for programmable authority flows");
+  }
+  if (!intent.policyVersion?.trim() && !intent.policyHash?.trim()) {
+    throw new Error("policyVersion or policyHash is required for programmable authority flows");
   }
 }
 

@@ -9,6 +9,12 @@
 - Published enums for order, position, instrument, exposure, and reason-code literals used by clients.
 - Defined breaking change and deprecation policy, including migration windows and deprecated transition fields/params.
 
+## 2026-09-10 — RFC-0015 programmable-authority additive update
+
+- Added programmable-authority audit query params for `intent_id`, `agent_id`, and `mandate_id` on markets order reads.
+- Added additive order schema fields for actor/agent/mandate, policy provenance, privacy/execution modes, user operation hash, tx hash, and settlement references.
+- Added canonical reason codes for deterministic authority validation failures and unsupported confidential execution mode.
+
 ## Update rule
 
 Any PR changing endpoints, schema shape, enum values, auth/header behavior, or error semantics must append a dated entry in this file.
