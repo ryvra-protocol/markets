@@ -189,6 +189,9 @@ paths:
         - $ref: '#/components/parameters/AccountIdRequiredParam'
         - $ref: '#/components/parameters/ReferenceIdParam'
         - $ref: '#/components/parameters/CorrelationIdParam'
+        - $ref: '#/components/parameters/IntentIdParam'
+        - $ref: '#/components/parameters/AgentIdParam'
+        - $ref: '#/components/parameters/MandateIdParam'
         - $ref: '#/components/parameters/RouteIdParam'
         - $ref: '#/components/parameters/OrderStatusParam'
         - $ref: '#/components/parameters/OrderSideParam'
@@ -225,6 +228,17 @@ paths:
                         idempotency_key: idem_7b0a2d0a
                         correlation_id: cor_e4f15f1d
                         account_id: acct_123
+                        intent_id: intent_3a81
+                        actor_type: AGENT
+                        actor_id: actor_44
+                        agent_id: agent_12
+                        mandate_id: mandate_8
+                        risk_assessment_id: risk_91
+                        authorization_id: auth_22
+                        policy_version: policy-risk@2.1.0
+                        policy_hash: sha256:abc123
+                        privacy_mode: SHIELDED
+                        execution_mode: PRIVATE
                         route_id: route_a2
                         side: buy
                         type: market
@@ -236,6 +250,9 @@ paths:
                         size: '1.25'
                         filled_size: '1.25'
                         avg_execution_price: '2810.55'
+                        user_operation_hash: '0xuserop123'
+                        tx_hash: '0xsettlement456'
+                        settlement_reference: settle_991
                         created_at: '2026-08-08T05:41:22Z'
                         updated_at: '2026-08-08T05:44:21Z'
                     page:
@@ -266,6 +283,9 @@ paths:
         - $ref: '#/components/parameters/XCorrelationIdHeader'
         - $ref: '#/components/parameters/IdempotencyKeyHeader'
         - $ref: '#/components/parameters/AccountIdRequiredParam'
+        - $ref: '#/components/parameters/IntentIdParam'
+        - $ref: '#/components/parameters/AgentIdParam'
+        - $ref: '#/components/parameters/MandateIdParam'
         - $ref: '#/components/parameters/CreatedAfterParam'
         - $ref: '#/components/parameters/CreatedBeforeParam'
       responses:
@@ -679,6 +699,33 @@ components:
       name: correlation_id
       in: query
       required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    IntentIdParam:
+      name: intent_id
+      in: query
+      required: false
+      description: Canonical intent identifier for programmable-authority audit lookups.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    AgentIdParam:
+      name: agent_id
+      in: query
+      required: false
+      description: Canonical agent identifier for agentic audit lookups.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    MandateIdParam:
+      name: mandate_id
+      in: query
+      required: false
+      description: Canonical mandate identifier for delegated-authority audit lookups.
       schema:
         type: string
         minLength: 1
@@ -1406,6 +1453,28 @@ components:
           type: string
         account_id:
           type: string
+        intent_id:
+          type: string
+        actor_type:
+          $ref: '#/components/schemas/ActorType'
+        actor_id:
+          type: string
+        agent_id:
+          type: string
+        mandate_id:
+          type: string
+        risk_assessment_id:
+          type: string
+        authorization_id:
+          type: string
+        policy_version:
+          type: string
+        policy_hash:
+          type: string
+        privacy_mode:
+          $ref: '#/components/schemas/PrivacyMode'
+        execution_mode:
+          $ref: '#/components/schemas/ExecutionMode'
         route_id:
           type: string
         side:
@@ -1433,6 +1502,12 @@ components:
         avg_execution_price:
           type: string
           pattern: '^\d+(\.\d+)?$'
+        user_operation_hash:
+          type: string
+        tx_hash:
+          type: string
+        settlement_reference:
+          type: string
         created_at:
           type: string
           format: date-time
@@ -1545,6 +1620,27 @@ components:
         - market
       description: Market is the only currently published order type.
 
+    ActorType:
+      type: string
+      enum:
+        - USER
+        - APP
+        - AGENT
+
+    ExecutionMode:
+      type: string
+      enum:
+        - PUBLIC
+        - PRIVATE
+        - CONFIDENTIAL
+
+    PrivacyMode:
+      type: string
+      enum:
+        - TRANSPARENT
+        - SHIELDED
+        - CONFIDENTIAL
+
     OrderStatus:
       type: string
       enum:
@@ -1609,8 +1705,22 @@ components:
         - policy_blocked_account
         - policy_dependency_timeout
         - policy_dependency_ambiguous
+        - actor_id_required
+        - agent_id_required
+        - mandate_id_required
+        - authorization_id_required
+        - risk_assessment_id_required
+        - intent_id_required
+        - policy_reference_required
+        - mandate_scope_invalid
+        - policy_action_mismatch
+        - risk_limits_mismatch
+        - funding_not_ready
+        - intent_window_expired
+        - idempotency_replay_detected
         - route_rejected
         - execution_chain_invalid
+        - execution_mode_confidential_unsupported
         - quote_invalid
         - execution_guardrail_violation
         - execution_dependency_timeout

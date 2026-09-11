@@ -118,6 +118,20 @@ export interface ExecutionBuildInput {
   inputToken: ExecutionBuildToken;
   outputToken: ExecutionBuildToken;
   quote: ExecutionBuildQuoteConstraints;
+  provenance?: {
+    actorType?: "USER" | "APP" | "AGENT";
+    actorId?: string;
+    agentId?: string;
+    mandateId?: string;
+    intentId?: string;
+    authorizationId?: string;
+    riskAssessmentId?: string;
+    policyVersion?: string;
+    policyHash?: string;
+    executionMode?: "PUBLIC" | "PRIVATE" | "CONFIDENTIAL";
+    privacyMode?: "TRANSPARENT" | "SHIELDED" | "CONFIDENTIAL";
+    userOperationHash?: string;
+  };
 }
 
 export interface ExecutionTxBuilderConfig {

@@ -35,6 +35,45 @@ describe("domain validation invariants", () => {
     ).toThrow("deadline must be a valid future timestamp");
   });
 
+  it("requires programmable authority identifiers for agent flows", () => {
+    expect(() =>
+      assertValidTradeIntent(
+        {
+          ...validIntent,
+          actorType: "AGENT",
+          actorId: "actor-1",
+          mandateId: "mandate-1",
+          riskAssessmentId: "risk-1",
+          authorizationId: "auth-1",
+          policyVersion: "policy-risk@2.0.0"
+        },
+        new Date("2026-01-01T00:00:00.000Z")
+      )
+    ).toThrow("agentId is required for agent flows");
+  });
+
+  it("rejects invalid execution or privacy modes", () => {
+    expect(() =>
+      assertValidTradeIntent(
+        {
+          ...validIntent,
+          executionMode: "LOCAL" as never
+        },
+        new Date("2026-01-01T00:00:00.000Z")
+      )
+    ).toThrow("executionMode is invalid");
+
+    expect(() =>
+      assertValidTradeIntent(
+        {
+          ...validIntent,
+          privacyMode: "OPAQUE" as never
+        },
+        new Date("2026-01-01T00:00:00.000Z")
+      )
+    ).toThrow("privacyMode is invalid");
+  });
+
   it("requires reason_codes on DENY decisions", () => {
     const deny: PolicyDecision = {
       decision: "DENY",

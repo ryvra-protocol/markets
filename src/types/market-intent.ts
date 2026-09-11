@@ -1,3 +1,10 @@
+import type {
+  ActorType,
+  ExecutionMode,
+  PrivacyMode,
+  TradeAuthorityReferences
+} from "../domain/trade-intent.js";
+
 export type MarketSide = "buy" | "sell";
 
 export interface MarketIntent {
@@ -13,4 +20,16 @@ export interface MarketIntent {
   account_id?: string;
   created_at?: string;
   meta?: Record<string, string>;
+  actorType?: ActorType;
+  actorId?: string;
+  agentId?: string;
+  mandateId?: string;
+  riskAssessmentId?: string;
+  authorizationId?: string;
+  policyVersion?: string;
+  policyHash?: string;
+  intentId?: string;
+  privacyMode?: PrivacyMode;
+  executionMode?: ExecutionMode;
+  authority?: TradeAuthorityReferences;
 }

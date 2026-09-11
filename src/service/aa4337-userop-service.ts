@@ -58,6 +58,12 @@ export type Aa4337ExecutionObservedEvent =
 
 export type Aa4337ExecutionObserver = (event: Aa4337ExecutionObservedEvent) => void | Promise<void>;
 
+export interface Aa4337ExecutionResult {
+  user_operation_hash: string;
+  transaction_hash?: string;
+  block_number?: number;
+}
+
 export interface Aa4337ExecutionInput {
   correlation_id: string;
   reference_id: string;
@@ -154,7 +160,7 @@ export class Aa4337UserOpService {
     private readonly observer?: Aa4337ExecutionObserver
   ) {}
 
-  async execute(input: Aa4337ExecutionInput): Promise<void> {
+  async execute(input: Aa4337ExecutionInput): Promise<Aa4337ExecutionResult | undefined> {
     const idempotencyKey = input.idempotency_key.trim();
     if (!idempotencyKey) {
       throw new Aa4337ExecutionError("idempotency_key is required for aa4337 path", "aa4337_replay_detected");
@@ -171,8 +177,7 @@ export class Aa4337UserOpService {
       this.assertGuardrails(input);
 
       if (currentState?.status === "submitted") {
-        await this.ensureIncluded(input, currentState.user_operation_hash);
-        return;
+        return this.ensureIncluded(input, currentState.user_operation_hash);
       }
 
       this.idempotencyState.set(idempotencyKey, { status: "inflight" });
@@ -200,7 +205,7 @@ export class Aa4337UserOpService {
         user_operation_hash: sendResult.user_operation_hash
       });
 
-      await this.ensureIncluded(input, sendResult.user_operation_hash);
+      return this.ensureIncluded(input, sendResult.user_operation_hash);
     } catch (error) {
       const normalized =
         error instanceof Aa4337ExecutionError
@@ -222,7 +227,10 @@ export class Aa4337UserOpService {
     }
   }
 
-  private async ensureIncluded(input: Aa4337ExecutionInput, userOperationHash: string): Promise<void> {
+  private async ensureIncluded(
+    input: Aa4337ExecutionInput,
+    userOperationHash: string
+  ): Promise<Aa4337ExecutionResult> {
     const receipt = await this.runtime.getReceipt({ user_operation_hash: userOperationHash });
     if (receipt.status !== "included") {
       throw new Aa4337ExecutionError(
@@ -241,6 +249,12 @@ export class Aa4337UserOpService {
       transaction_hash: receipt.transaction_hash,
       block_number: receipt.block_number
     });
+
+    return {
+      user_operation_hash: userOperationHash,
+      transaction_hash: receipt.transaction_hash,
+      block_number: receipt.block_number
+    };
   }
 
   private assertGuardrails(input: Aa4337ExecutionInput): void {

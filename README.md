@@ -117,3 +117,49 @@ Ops readiness docs:
   - `markets_allow_path_total`
   - `markets_execution_blocked_total`
   - `markets_execution_failure_total`
+
+
+## RFC-0015 programmable-authority upgrades
+
+- `TradeIntent` and `MarketIntent` now support structured programmable-authority metadata:
+  - `actorType`, `actorId`, `agentId`
+  - `mandateId`, `riskAssessmentId`, `authorizationId`
+  - `policyVersion`, `policyHash`, `intentId`
+  - `privacyMode`, `executionMode`
+  - deterministic `authority` references for mandate scope, policy compatibility, risk compatibility, funding readiness, and intent expiry
+- Execution semantics are explicit and deterministic:
+  - `PUBLIC`: existing execution path with full provenance exposure
+  - `PRIVATE`: existing execution path with reduced provenance exposure in observer/log payloads
+  - `CONFIDENTIAL`: explicit deterministic reject via `execution_mode_confidential_unsupported` until a confidential handoff engine exists
+- Privacy semantics are explicit and deterministic:
+  - `TRANSPARENT`: full provenance exposure to observer payloads
+  - `SHIELDED`: redacted observer provenance
+  - `CONFIDENTIAL`: redacted observer provenance and reserved for confidential handling contracts
+- Agentic/app flows are gated before routing on deterministic authority checks for:
+  - mandate scope/activity
+  - compatible policy decision
+  - compatible risk decision and limits
+  - funding/reservation readiness when required
+  - non-expired intent window
+  - replay-safe idempotency
+- Provenance is propagated through policy evaluation, execution build inputs, AA4337 user operation handling, routing, and settlement handoff. Audit-linked fields include:
+  - `agentId`, `mandateId`, `intentId`, `authorizationId`, `riskAssessmentId`, `policyVersion`, `policyHash`
+  - `userOperationHash` when AA4337 is used
+  - `txHash` and settlement references at handoff time
+- Audit query surfaces now include `intent_id`, `agent_id`, and `mandate_id` filters on markets order reads.
+
+### Audit examples
+
+- Find all orders for a delegated strategy run: `GET /markets/orders?account_id=acct_123&agent_id=agent_12`
+- Trace an intent across execution: `GET /markets/orders?account_id=acct_123&intent_id=intent_3a81`
+- Review all fills under a mandate: `GET /markets/orders?account_id=acct_123&mandate_id=mandate_8`
+
+### RFC mapping
+
+- RFC-0015: programmable-authority metadata, deterministic authority checks, privacy/execution mode handling, provenance propagation
+- Dependency alignment already present in this repository:
+  - PR4 policy gate normalization
+  - PR5 deterministic execution payload guardrails
+  - PR6 settlement lifecycle + reconciliation hooks
+  - PR7 unified asset normalization
+  - PR8 AA4337 user operation integration
